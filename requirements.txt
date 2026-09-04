@@ -1,0 +1,10 @@
+numpy<2.0.0
+scipy<1.14.0
+pandas>=2.0.0
+spacy>=3.7.2,<3.8.0
+sentence-transformers>=3.0.0
+umap-learn>=0.5.5
+hdbscan>=0.8.38
+datasets>=2.18.0
+tqdm>=4.66.0
+python-dotenv>=1.0.1
