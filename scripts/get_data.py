@@ -2,11 +2,13 @@ import json
 import time
 
 import hdbscan
+import numpy as np
 import spacy
 import umap
 from datasets import load_dataset
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
+from sklearn.cluster import KMeans
 from tqdm import tqdm
 
 load_dotenv()
@@ -85,35 +87,71 @@ def extract_chunks():
                 continue
 
             for token in sent:
-                chunk_text = None
+                chunk_tokens = []
 
                 if token.pos_ == "VERB":
-                    prt = [c for c in token.children if c.dep_ == "prt"]
-                    dobj = [c for c in token.children if c.dep_ == "dobj"]
-                    prep = [c for c in token.children if c.dep_ == "prep"]
+                    chunk_tokens.append(token)
 
-                    if prt and dobj:  # Verb + Particle + Dobj (VD: turn it off)
-                        chunk_text = f"{token.text.lower()} {prt[0].text.lower()} {dobj[0].text.lower()}"
-                    elif prt:  # Phrasal verb: Verb + Particle (VD: give up)
-                        chunk_text = f"{token.text.lower()} {prt[0].text.lower()}"
-                    elif prep:
-                        pobj = [c for c in prep[0].children if c.dep_ == "pobj"]
-                        if pobj:  # Verb + Prep + Object (VD: depend on it)
-                            chunk_text = f"{token.text.lower()} {prep[0].text.lower()} {pobj[0].text.lower()}"
-                    elif dobj:  # Fallback: Verb + Dobj (VD: play soccer)
-                        chunk_text = f"{token.text.lower()} {dobj[0].text.lower()}"
+                    # 1. Tìm tân ngữ trực tiếp (VD: grant PERMISSION)
+                    dobj = [c for c in token.children if c.dep_ == "dobj"]
+                    if dobj:
+                        obj = dobj[0]
+                        chunk_tokens.append(obj)
+                        # Bắt thêm mạo từ (a, the), đại từ sở hữu (my, their) và tính từ của tân ngữ
+                        modifiers = [
+                            c
+                            for c in obj.children
+                            if c.dep_ in ("det", "poss", "amod", "compound")
+                        ]
+                        chunk_tokens.extend(modifiers)
+
+                        # Bắt giới từ đi theo sau tân ngữ (VD: permission TO)
+                        obj_prep = [c for c in obj.children if c.dep_ == "prep"]
+                        if obj_prep:
+                            chunk_tokens.append(obj_prep[0])
+
+                    # 2. Tìm giới từ bám trực tiếp vào động từ (VD: grant access FROM)
+                    v_prep = [c for c in token.children if c.dep_ == "prep"]
+                    if v_prep:
+                        chunk_tokens.append(v_prep[0])
+                        # Nếu động từ KHÔNG CÓ tân ngữ, ta lấy luôn vế sau giới từ (VD: depend on THE SYSTEM)
+                        if not dobj:
+                            pobj = [c for c in v_prep[0].children if c.dep_ == "pobj"]
+                            if pobj:
+                                chunk_tokens.append(pobj[0])
+                                modifiers = [
+                                    c
+                                    for c in pobj[0].children
+                                    if c.dep_ in ("det", "poss", "amod", "compound")
+                                ]
+                                chunk_tokens.extend(modifiers)
+
+                    # 3. Gom luôn Phrasal verbs (VD: turn OFF)
+                    prt = [c for c in token.children if c.dep_ == "prt"]
+                    if prt:
+                        chunk_tokens.extend(prt)
 
                 elif token.pos_ == "NOUN":
-                    # Lấy tính từ (amod) hoặc danh từ ghép (compound) đi kèm
+                    # Xử lý Cụm Danh Từ dài: Tính từ + Danh từ + Giới từ + Tân ngữ (VD: a strong impact ON society)
                     modifiers = [
-                        c.text.lower()
-                        for c in token.children
-                        if c.dep_ in ("amod", "compound")
+                        c for c in token.children if c.dep_ in ("amod", "compound")
                     ]
-                    if modifiers:
-                        chunk_text = f"{' '.join(modifiers)} {token.text.lower()}"
+                    prep = [c for c in token.children if c.dep_ == "prep"]
 
-                if chunk_text:
+                    if modifiers and prep:
+                        chunk_tokens.append(token)
+                        chunk_tokens.extend(modifiers)
+                        chunk_tokens.append(prep[0])
+                        pobj = [c for c in prep[0].children if c.dep_ == "pobj"]
+                        if pobj:
+                            chunk_tokens.append(pobj[0])
+
+                # LỌC: Bắt buộc độ dài từ 3 đến 6 từ để tạo thành Collocation hoàn chỉnh
+                if chunk_tokens and 3 <= len(chunk_tokens) <= 6:
+                    # Sắp xếp các từ lại theo đúng thứ tự xuất hiện gốc trong câu (.i)
+                    chunk_tokens = sorted(set(chunk_tokens), key=lambda x: x.i)
+                    chunk_text = " ".join([t.text.lower() for t in chunk_tokens])
+
                     is_full = add_chunk(chunk_text, "grammatical_collocation")
                     if is_full:
                         break
@@ -154,23 +192,67 @@ def build_galaxy():
     print(f"[+] Xây cây phân cấp xong sau {time.time() - start_time:.2f} giây.")
 
     tree_df = clusterer.condensed_tree_.to_pandas()
-
     tree_df.to_csv("galaxy_tree.csv", index=False)
+
+    print("\n[5] Xây dựng Cấu trúc Ngân hà 3 Tầng (Bottom-Up)...")
+    labels = clusterer.labels_
+    valid_labels = sorted(set(labels) - {-1})
+    num_leaf_clusters = len(valid_labels)
+
+    # Tầng 3 (Chòm sao Lá): Lấy tâm (centroid) của các cụm HDBSCAN
+    leaf_centroids = []
+    for label in valid_labels:
+        # Dùng embeddings gốc (không gian AI đa chiều) để đảm bảo ngữ nghĩa chuẩn nhất
+        cluster_points = embeddings[labels == label]
+        leaf_centroids.append(cluster_points.mean(axis=0))
+    leaf_centroids = np.array(leaf_centroids)
+
+    # Tầng 2 (Tiểu tinh): Gom lên thành 100 cụm
+    n_sub = min(100, num_leaf_clusters)
+    print(
+        f"[*] Đang gom {num_leaf_clusters} Chòm sao thành {n_sub} Tiểu tinh (Layer 2)..."
+    )
+    kmeans_l2 = KMeans(n_clusters=n_sub, random_state=42, n_init="auto")
+    l2_mapping = kmeans_l2.fit_predict(leaf_centroids)
+
+    # Lấy tâm của Tầng 2 để gom tiếp lên Tầng 1
+    l2_centroids = []
+    for i in range(n_sub):
+        points = leaf_centroids[l2_mapping == i]
+        l2_centroids.append(points.mean(axis=0))
+    l2_centroids = np.array(l2_centroids)
+
+    # Tầng 1 (Đại tinh): Gom lên thành 10 cụm
+    n_super = min(10, n_sub)
+    print(f"[*] Đang gom {n_sub} Tiểu tinh thành {n_super} Đại tinh (Layer 1)...")
+    kmeans_l1 = KMeans(n_clusters=n_super, random_state=42, n_init="auto")
+    l1_mapping = kmeans_l1.fit_predict(l2_centroids)
+
+    # Tạo từ điển map ID nhanh (Layer 3 -> Layer 2 -> Layer 1)
+    label_to_l2 = {valid_labels[i]: l2_mapping[i] for i in range(num_leaf_clusters)}
+    l2_to_l1 = {i: l1_mapping[i] for i in range(n_sub)}
+
     type_map = {"conversational_routine": 0, "grammatical_collocation": 1}
+    galaxy_nodes = []
+    for c, m, label in zip(chunks, metadata, labels):
+        is_noise = label == -1
+        node = {
+            "chunk": c,
+            "type": type_map.get(m["type"], 0),
+            "l3_cluster": int(label),
+            "l2_cluster": int(label_to_l2[label]) if not is_noise else -1,
+            "l1_cluster": int(l2_to_l1[label_to_l2[label]]) if not is_noise else -1,
+        }
+        galaxy_nodes.append(node)
+
     with open("galaxy_nodes.json", "w", encoding="utf-8") as f:
-        json.dump(
-            [
-                {"chunk": c, "type": type_map.get(m["type"], 0), "cluster": int(label)}
-                for c, m, label in zip(chunks, metadata, clusterer.labels_)
-            ],
-            f,
-            ensure_ascii=False,
-        )
+        json.dump(galaxy_nodes, f, ensure_ascii=False)
+
     print(
         "\n[V] Hoàn tất! File cây cấu trúc lưu tại 'galaxy_tree.csv' và 'galaxy_nodes.json'."
     )
     print(
-        "=> Bạn có thể chạy 'python scripts/analyze_tree.py' để xem thống kê bất kỳ lúc nào."
+        "=> BẢN ĐỒ NGÂN HÀ ĐÃ CHUẨN: 10 Đại tinh -> 100 Tiểu tinh -> Các Chòm sao HDBSCAN."
     )
 
 
