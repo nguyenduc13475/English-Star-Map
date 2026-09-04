@@ -2,7 +2,6 @@ import json
 import time
 
 import hdbscan
-import numpy as np
 import spacy
 import umap
 from datasets import load_dataset
@@ -161,41 +160,17 @@ def build_galaxy():
     with open("galaxy_nodes.json", "w", encoding="utf-8") as f:
         json.dump(
             [
-                {"chunk": c, "type": type_map.get(m["type"], 0)}
-                for c, m in zip(chunks, metadata)
+                {"chunk": c, "type": type_map.get(m["type"], 0), "cluster": int(label)}
+                for c, m, label in zip(chunks, metadata, clusterer.labels_)
             ],
             f,
             ensure_ascii=False,
         )
-
-    analyze_tree(tree_df, clusterer.labels_, TARGET_CHUNKS)
-
-
-def analyze_tree(tree_df, labels, total_chunks):
-    print("\n==========================================")
-    print(" BÁO CÁO CẤU TRÚC NGÂN HÀ (TREE STATS)")
-    print("==========================================")
-
-    unique_clusters = set(labels)
-    num_clusters = len(unique_clusters) - (1 if -1 in unique_clusters else 0)
-    noise_count = np.sum(labels == -1)
-
-    print(f"- Tổng số Chòm sao (Clusters) phân rã: {num_clusters}")
     print(
-        f"- Rác vũ trụ (Noise/Outliers bị loại): {noise_count} ({noise_count / total_chunks * 100:.1f}%)"
+        "\n[V] Hoàn tất! File cây cấu trúc lưu tại 'galaxy_tree.csv' và 'galaxy_nodes.json'."
     )
-
-    branching = tree_df.groupby("parent").size()
-
-    print(f"- Branching Factor Trung bình (Số con/cha): {branching.mean():.2f}")
-    print(f"- Branching Factor Nhỏ nhất: {branching.min()}")
-    print(f"- Branching Factor Lớn nhất (Siêu Tinh Vực nổ): {branching.max()}")
-
-    depth_levels = len(tree_df["lambda_val"].unique())
-    print(f"- Độ sâu (LOD Levels / Lambda cuts): {depth_levels} tầng chi tiết.")
-    print("==========================================")
     print(
-        "[V] Hoàn tất! File cây cấu trúc lưu tại 'galaxy_tree.csv' và 'galaxy_nodes.json'."
+        "=> Bạn có thể chạy 'python scripts/analyze_tree.py' để xem thống kê bất kỳ lúc nào."
     )
 
 
