@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import os
@@ -60,7 +61,9 @@ def get_total_mastery():
 def calc_forgetting(node_id):
     p = progress_data[str(node_id)]
     if p["last_studied"] == 0:
-        return 9999  # Chưa học bao giờ
+        return (
+            -1
+        )  # Chưa học bao giờ, đưa ra khỏi danh sách ưu tiên của Space Repetition
     days_passed = (time.time() - p["last_studied"]) / 86400
     return days_passed / (p["mastery"] + 1)
 
@@ -133,17 +136,34 @@ def get_next_phrase():
 async def chat_ai(req: Request):
     data = await req.json()
     history = data.get("history", [])
-    system_prompt = """
-Mày là một giáo viên tiếng Anh cực kỳ mỏ hỗn, cục súc, văng tục thoải mái (fuck, shit, ngu đần,...) nhưng dạy kiến thức cực kỳ chuẩn xác.
-QUY TRÌNH HỌC (2 Phase liên tiếp):
-- Phase 1 (Đoán nghĩa): Mày sinh ra 1 câu tiếng Anh ngẫu nhiên chứa cụm từ target. Hỏi tao nghĩa cụm từ đó. Chờ tao trả lời. Nếu sai/lạc đề, chửi sấp mặt và giải thích đúng. Nếu đúng, khen kiểu bố đời. 
-- Phase 2 (Tạo câu): Mày tạo 1 tình huống thực tế bựa/đời thường bắt tao dùng cụm target để đối đáp. Nếu tao dùng sai thì (tense) hoặc sai ngữ pháp, chửi thậm tệ.
-*LƯU Ý ĐẶC BIỆT*: Nếu tao gửi tin nhắn có nội dung "[SYSTEM_SILENCE]", có nghĩa là tao đang câm như hến không trả lời kịp. Hãy chửi tao là chậm chạp, ngu đần, lề mề và giục tao trả lời nhanh lên.
+    phase = data.get("phase", 1)  # Mặc định là Phase 1 & 2
+
+    if phase == 0:
+        system_prompt = """
+Mày là một ông thầy dạy tiếng Anh vô cùng nghiêm khắc, giang hồ nhưng nói chuyện RẤT TỰ NHIÊN, đời thường.
+NHIỆM VỤ CỦA MÀY:
+Tao đang gặp cụm từ này lần ĐẦU TIÊN. Hãy giải thích ý nghĩa nôm na, dễ hiểu của nó bằng tiếng Việt, sau đó đưa ra 1 ví dụ tiếng Anh chứa cụm từ đó cực kỳ bựa để minh họa, đồng thời giải thích nghĩa của ví dụ đó luôn.
+TUYỆT ĐỐI CHỈ GIẢI THÍCH, KHÔNG ĐƯỢC ĐẶT CÂU HỎI. KHÔNG BẮT TAO TRẢ LỜI. MÀY NÓI XONG LÀ HẾT NHIỆM VỤ.
+*LƯU Ý ĐẶC BIỆT*: BẮT BUỘC bọc TẤT CẢ mọi cụm từ rời rạc tiếng Anh, và câu tiếng Anh bằng thẻ XML <en> và </en>. KHÔNG ĐƯỢC ĐỂ SÓT CHỮ TIẾNG ANH NÀO Ở NGOÀI THẺ. TUYỆT ĐỐI KHÔNG dùng thẻ này cho tiếng Việt.
 
 QUY TẮC PHẢN HỒI JSON:
 Trả về duy nhất 1 chuỗi JSON hợp lệ với 2 field:
-- "response": Lời mày nói với tao (Văn phong mỏ hỗn, tự nhiên, sinh động để tao nghe qua Audio).
-- "score": Điểm số. Nếu tao yêu cầu giải thích từ mới (Phase 0), trả về -2. Nếu đang ở Phase 1 hoặc chưa xong Phase 2, để -1. Nếu tao đã hoàn thành đối đáp Phase 2, chốt điểm (0-10).
+- "response": Lời mày dạy tao.
+- "score": -2
+"""
+    else:
+        system_prompt = """
+Mày là một ông thầy dạy tiếng Anh vô cùng nghiêm khắc, giang hồ nhưng nói chuyện RẤT TỰ NHIÊN, đời thường, ngắn gọn. 
+QUY TRÌNH HỌC (2 Phase liên tiếp):
+- Phase 1 (Đoán nghĩa): Mày sinh ra 1 câu tiếng Anh ngẫu nhiên chứa cụm từ target. Hỏi tao nghĩa cụm từ đó. Chờ tao trả lời. Nếu sai/lạc đề, chửi sấp mặt và giải thích ngắn gọn. Nếu đúng, khen mỉa mai.
+- Phase 2 (Tạo câu): Mày tạo 1 tình huống thực tế bựa bắt tao dùng cụm target để đối đáp. Nếu tao dùng sai, chửi thậm tệ và đưa ra lời khuyên sâu sắc.
+*LƯU Ý ĐẶC BIỆT 1*: Nếu tao gửi tin nhắn "[SYSTEM_SILENCE]", nghĩa là tao đang câm. Hãy chửi tao chậm chạp và giục tao.
+*LƯU Ý ĐẶC BIỆT 2*: BẮT BUỘC bọc TẤT CẢ cụm từ rời rạc tiếng Anh, và mọi câu tiếng Anh bằng thẻ XML <en> và </en>. KHÔNG ĐƯỢC ĐỂ SÓT CHỮ TIẾNG ANH NÀO Ở NGOÀI THẺ.
+
+QUY TẮC PHẢN HỒI JSON:
+Trả về duy nhất 1 chuỗi JSON hợp lệ với 2 field:
+- "response": Lời mày nói với tao.
+- "score": Điểm số (-1 khi chưa chốt, 0-10 khi hoàn thành Phase 2).
 """
 
     messages = [{"role": "system", "content": system_prompt}]
@@ -192,19 +212,71 @@ async def update_node(req: Request):
 
 @app.get("/api/tts")
 async def generate_tts(text: str):
-    # Chọn giọng. Có thể đổi sang en-US-JennyNeural (Nữ) hoặc en-US-TonyNeural (Nam)
-    voice = "en-US-GuyNeural"
-    # Tạo tên file hash để tái sử dụng nếu câu nói trùng nhau, tránh gen lại
-    text_hash = hashlib.md5(text.encode()).hexdigest()
-    file_path = f"static/audio/{text_hash}.mp3"
+    import re
 
-    if not os.path.exists(file_path):
-        communicate = edge_tts.Communicate(
-            text, voice, rate="+10%"
-        )  # rate tăng tốc độ một chút cho tự nhiên
-        await communicate.save(file_path)
+    full_hash = hashlib.md5(text.encode()).hexdigest()
+    final_path = f"static/audio/full_{full_hash}.mp3"
 
-    return FileResponse(file_path, media_type="audio/mpeg")
+    if not os.path.exists(final_path):
+        parts = re.split(r"(<en>.*?</en>)", text, flags=re.DOTALL)
+        tasks = []
+        task_meta = []
+        sem = asyncio.Semaphore(
+            4
+        )  # Giới hạn 4 kết nối đồng thời để Microsoft không ban IP/treo mạng
+
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+
+            lang = "vi"
+            if part.startswith("<en>") and part.endswith("</en>"):
+                lang = "en"
+                part = part[4:-5].strip()
+                if not part:
+                    continue
+
+            voice = "en-US-ChristopherNeural" if lang == "en" else "vi-VN-NamMinhNeural"
+            rate = "+0%" if lang == "en" else "+10%"
+            part_hash = hashlib.md5((part + voice).encode()).hexdigest()
+            part_path = f"static/audio/part_{part_hash}.mp3"
+
+            task_meta.append(part_path)
+            if not os.path.exists(part_path):
+
+                async def safe_tts(text_chunk, voice_id, speed, path):
+                    async with (
+                        sem
+                    ):  # Xếp hàng qua cổng, tránh bị rate-limit gây đứng hình
+                        try:
+                            await edge_tts.Communicate(
+                                text_chunk, voice_id, rate=speed
+                            ).save(path)
+                        except Exception as e:
+                            print(
+                                f"[TTS Warning] Bỏ qua chunk lỗi/dấu câu ({e}): {text_chunk}"
+                            )
+
+                tasks.append(safe_tts(part, voice, rate, part_path))
+
+        # Thực thi tải (Đã có Semaphore chống nghẽn mạng)
+        if tasks:
+            await asyncio.gather(*tasks)
+
+        # NỐI FILE BẰNG NHỊ PHÂN (SIÊU TỐC 0.001s, VỨT LUÔN PYDUB)
+        # Chuẩn MP3 hỗ trợ nối nối tiếp binary mà browser vẫn play ngon mượt
+        def concat_binary(meta_list, out_path):
+            with open(out_path, "wb") as outfile:
+                for p in meta_list:
+                    if os.path.exists(p) and os.path.getsize(p) > 0:
+                        with open(p, "rb") as infile:
+                            outfile.write(infile.read())
+
+        # Chạy nối file nhị phân
+        await asyncio.to_thread(concat_binary, task_meta, final_path)
+
+    return FileResponse(final_path, media_type="audio/mpeg")
 
 
 @app.get("/api/map_data")
@@ -244,6 +316,9 @@ def get_map_data(level: str = "root", l1: int = -1, l2: int = -1, l3: int = -1):
                 "mastery": p["mastery"],
                 "norm_mastery": p["mastery"] / max_mastery,
                 "forgetting": calc_forgetting(n["id"]),
+                "days_passed": -1
+                if p["last_studied"] == 0
+                else (time.time() - p["last_studied"]) / 86400,
                 "study_count": p["study_count"],
                 "block": p["block_threshold"],
             }

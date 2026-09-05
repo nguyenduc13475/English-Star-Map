@@ -86,7 +86,7 @@
     
     // Timer chống câm lặng
     let silenceTimeout = null;
-    const SILENCE_LIMIT_MS = 15000; // 15 giây không phản hồi sẽ bị AI chửi
+    const SILENCE_LIMIT_MS = 3000; // Rút xuống 3 giây, ngắc ngứ là chửi luôn cho real
     let isSessionActive = false;
 
     // Format ngày hiển thị hover
@@ -154,7 +154,12 @@
         const box = document.getElementById('chat-box');
         const div = document.createElement('div');
         div.className = `msg ${role}`;
-        div.textContent = text === "[SYSTEM_SILENCE]" ? "(Bạn im lặng quá lâu...)" : text;
+        
+        // Regex loại bỏ thẻ <en> và tô màu vàng/in đậm tiếng Anh cho đẹp mắt
+        let formattedText = text === "[SYSTEM_SILENCE]" ? "(Bạn im lặng quá lâu...)" : text;
+        formattedText = formattedText.replace(/<en>(.*?)<\/en>/g, '<strong style="color: #fcd34d;">$1</strong>');
+        
+        div.innerHTML = formattedText;
         box.appendChild(div);
         box.scrollTop = box.scrollHeight;
     }
@@ -172,7 +177,7 @@
                 if (document.getElementById('use-mic').checked && recognition && isSessionActive) {
                     try { recognition.start(); } catch(e){}
                 }
-                startSilenceTimer(); // Bắt đầu đếm giờ chờ người dùng trả lời
+                startSilenceTimer(); 
                 resolve();
             };
             audioObj.play().catch(e => {
@@ -268,7 +273,7 @@
         if (isNewWord) {
             chatHistory.push({
                 "role": "user",
-                "content": `Từ khóa tao cần học là: "${currentNode.chunk}". Đây là lần đầu tiên tao học cụm này, hãy giải thích ý nghĩa nôm na của nó, kèm theo ví dụ ứng dụng cụm từ này cực kỳ mỏ hỗn / chửi rủa theo phong cách của mày. NHỚ LÀ CHỈ GIẢI THÍCH, KHÔNG ĐƯỢC ĐẶT CÂU HỎI KIỂM TRA TAO, VÀ CHỐT SCORE LÀ -2 Ở TRONG JSON RESPONSE!`
+                "content": `Từ khóa tao cần học là: "${currentNode.chunk}". Đây là lần đầu tiên tao gặp cụm này, hãy dạy tao.`
             });
         } else {
             chatHistory.push({
@@ -280,12 +285,36 @@
         const chatRes = await fetch('/api/chat', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({history: chatHistory})
+            body: JSON.stringify({
+                history: chatHistory, 
+                phase: isNewWord ? 0 : 1 
+            })
         });
         const chatData = await chatRes.json();
         chatHistory.push({"role": "assistant", "content": chatData.response});
         addMessage('ai', chatData.response);
-        await playTTS(chatData.response);
+        
+        // Cắt cầu Session nếu là Phase 0 (dạy từ mới)
+        if (isNewWord || chatData.score === -2) {
+            isSessionActive = false; // Tắt cờ session để chặn mic và chặn timer câm lặng
+            resetSilenceTimer();
+            if (recognition) recognition.stop();
+            
+            await fetch('/api/update_node', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id: currentNode.id, score: -2})
+            });
+            
+            addMessage('system', `[SESSION END] Đã tiếp thu từ mới. Mastery khởi tạo: 0.5`);
+            document.getElementById('next-btn').style.display = 'block';
+            loadMapData(); 
+            
+            // Cho máy đọc sau khi đã set cờ false, đảm bảo đọc xong không đếm ngược
+            await playTTS(chatData.response);
+        } else {
+            await playTTS(chatData.response);
+        }
     };
 
     // ==========================================
@@ -382,9 +411,9 @@
             const blockStatus = p.block > 0 ? `<br><b style="color:red;">Blocked (Mở ở mốc: ${p.block})</b>` : '';
             return `<b>${p.chunk}</b><br>
             Mastery: ${p.mastery.toFixed(1)}<br>
-            Forgetting: ${p.forgetting > 9000 ? 'Chưa học' : p.forgetting.toFixed(2)}<br>
+            Forgetting Index: ${p.forgetting < 0 ? 'Chưa học' : p.forgetting.toFixed(2)}<br>
             Số lần học lại: ${p.study_count}<br>
-            Lần học cuối: ${p.forgetting > 9000 ? 'N/A' : (Math.floor(p.forgetting) + ' ngày trước')}${blockStatus}`;
+            Lần học cuối: ${p.days_passed < 0 ? 'N/A' : (Math.floor(p.days_passed) + ' ngày trước')}${blockStatus}`;
         });
         
         let marker = { size: currentMapLevel.level === 'root' ? 3 : 5, opacity: 0.8 };
@@ -393,8 +422,8 @@
             marker.color = mapDataCache.map(p => p.norm_mastery);
             marker.colorscale = 'YlGnBu';
         } else if (metric === 'forgetting') {
-            const maxF = Math.max(...mapDataCache.filter(p => p.forgetting < 9000).map(p => p.forgetting), 1);
-            marker.color = mapDataCache.map(p => p.forgetting > 9000 ? 0 : p.forgetting / maxF);
+            const maxF = Math.max(...mapDataCache.filter(p => p.forgetting >= 0).map(p => p.forgetting), 1);
+            marker.color = mapDataCache.map(p => p.forgetting < 0 ? 0 : p.forgetting / maxF);
             marker.colorscale = 'Hot';
         } else if (metric === 'l1' || metric === 'l2' || metric === 'l3') {
             marker.color = mapDataCache.map(p => p[metric]);
