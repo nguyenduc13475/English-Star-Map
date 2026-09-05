@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Star Map English - IELTS 7.0</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0f172a; color: #e2e8f0; display: flex; height: 100vh; overflow: hidden; }
+        #left-panel { width: 35%; padding: 20px; background-color: #1e293b; border-right: 1px solid #334155; display: flex; flex-direction: column; }
+        #right-panel { width: 65%; display: flex; flex-direction: column; position: relative; }
+        .chat-box { flex-grow: 1; overflow-y: auto; background: #0f172a; padding: 15px; border-radius: 8px; margin-bottom: 15px; display: flex; flex-direction: column; gap: 10px;}
+        .msg { padding: 10px 15px; border-radius: 8px; max-width: 85%; }
+        .msg.ai { background: #3b82f6; align-self: flex-start; }
+        .msg.user { background: #10b981; align-self: flex-end; }
+        .controls { display: flex; gap: 10px; align-items: center; }
+        input[type="text"] { flex-grow: 1; padding: 10px; border-radius: 5px; border: 1px solid #475569; background: #0f172a; color: white; }
+        button { padding: 10px 20px; background: #3b82f6; border: none; color: white; border-radius: 5px; cursor: pointer; font-weight: bold;}
+        button:hover { background: #2563eb; }
+        button:disabled { background: #64748b; cursor: not-allowed; }
+        #map-container { flex-grow: 1; width: 100%; }
+        .map-tools { position: absolute; top: 10px; right: 10px; background: rgba(30, 41, 59, 0.9); padding: 10px; border-radius: 8px; z-index: 100; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .map-tools select, .map-tools button { padding: 5px; margin-bottom: 5px; width: 100%; }
+        .stats-bar { background: #1e293b; padding: 10px; font-size: 0.9em; display: flex; justify-content: space-between; border-bottom: 1px solid #334155;}
+        #current-target { color: #f59e0b; font-weight: bold; font-size: 1.2em; margin-bottom: 10px;}
+        .recording-indicator { color: #ef4444; font-weight: bold; display: none; }
+    </style>
+</head>
+<body>
+
+<div id="left-panel">
+    <h2>Combat Session</h2>
+    <div id="current-target">Target: <span id="target-word">None</span></div>
+    <div class="chat-box" id="chat-box"></div>
+    
+    <div class="controls">
+        <label><input type="checkbox" id="use-mic"> Dùng Mic</label>
+        <span class="recording-indicator" id="recording-dot">🎤 Đang nghe...</span>
+    </div>
+    <div class="controls" style="margin-top: 10px;">
+        <input type="text" id="user-input" placeholder="Gõ câu trả lời hoặc nói vào mic...">
+        <button id="send-btn">Gửi</button>
+    </div>
+    <button id="next-btn" style="margin-top: 10px; width: 100%; background: #f59e0b;">Học cụm tiếp theo</button>
+</div>
+
+<div id="right-panel">
+    <div class="stats-bar">
+        <span>Tiến trình (Total Mastery): <strong id="total-mastery">0</strong></span>
+        <span id="nav-breadcrumb">Bậc: Ngân Hà (Root)</span>
+    </div>
+    <div class="map-tools">
+        <label>Tô màu theo:</label>
+        <select id="color-metric" onchange="renderMap()">
+            <select id="color-metric" onchange="renderMap()">
+                <option value="mastery">Mastery (Độ thông thạo)</option>
+                <option value="forgetting">Forgetting (Sắp quên)</option>
+                <option value="l1">Đại tinh (L1)</option>
+            </select>
+        </select>
+        <button onclick="zoomOut()">🔙 Trở lại bậc trên</button>
+    </div>
+    <div id="map-container"></div>
+</div>
+
+<script>
+    let chatHistory = [];
+    let currentNode = null;
+    let audioObj = null;
+    let recognition = null;
+    let isRecording = false;
+    let silenceTimeout = null;
+    let currentMapLevel = { level: 'root', l1: -1, l2: -1 };
+    let mapDataCache = [];
+
+    // Khởi tạo Web Speech API cho chức năng thu âm
+    if ('webkitSpeechRecognition' in window) {
+        recognition = new webkitSpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US'; // Hoặc 'vi-VN' tùy theo Phase
+
+        recognition.onstart = function() {
+            document.getElementById('recording-dot').style.display = 'inline';
+        };
+
+        recognition.onresult = function(event) {
+            clearTimeout(silenceTimeout); // Reset timeout nếu đang nói
+            let finalTranscript = '';
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                if (event.results[i].isFinal) {
+                    finalTranscript += event.results[i][0].transcript;
+                }
+            }
+            if(finalTranscript !== '') {
+                document.getElementById('user-input').value = finalTranscript;
+                // Timeout im lặng 2 giây thì tự gửi
+                silenceTimeout = setTimeout(() => {
+                    document.getElementById('send-btn').click();
+                }, 2000);
+            }
+        };
+
+        recognition.onend = function() {
+            document.getElementById('recording-dot').style.display = 'none';
+            if (document.getElementById('use-mic').checked && !audioObj) {
+                recognition.start(); // Tự động bật lại nếu đang tích chọn mic
+            }
+        };
+    }
+
+    function addMessage(role, text) {
+        const box = document.getElementById('chat-box');
+        const div = document.createElement('div');
+        div.className = `msg ${role}`;
+        div.textContent = text;
+        box.appendChild(div);
+        box.scrollTop = box.scrollHeight;
+    }
+
+    async function playTTS(text) {
+        return new Promise((resolve) => {
+            if (audioObj) audioObj.pause();
+            if (recognition) recognition.stop(); // Dừng nghe khi AI nói
+            
+            const url = `/api/tts?text=${encodeURIComponent(text)}`;
+            audioObj = new Audio(url);
+            audioObj.onended = () => {
+                audioObj = null;
+                if (document.getElementById('use-mic').checked && recognition) {
+                    recognition.start(); // Tiếp tục nghe sau khi AI nói xong
+                }
+                resolve();
+            };
+            audioObj.play().catch(e => {
+                console.error("Audio error", e);
+                resolve();
+            });
+        });
+    }
+
+    async function sendMessage(text) {
+        if (!currentNode) return;
+        addMessage('user', text);
+        document.getElementById('user-input').value = '';
+        document.getElementById('send-btn').disabled = true;
+
+        chatHistory.push({"role": "user", "content": text});
+
+        try {
+            const res = await fetch('/api/chat', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    history: chatHistory
+                })
+            });
+            const data = await res.json();
+            
+            chatHistory.push({"role": "assistant", "content": data.response});
+            addMessage('ai', data.response);
+            await playTTS(data.response);
+
+            // Nếu trả về score >= 0 tức là chốt sổ Phase 2
+            if (data.score >= 0) {
+                await fetch('/api/update_node', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id: currentNode.id, score: data.score})
+                });
+                addMessage('ai', `[HỆ THỐNG] Session kết thúc. Bạn đạt ${data.score}/10 điểm.`);
+                document.getElementById('next-btn').style.display = 'block';
+                loadMapData(); // Cập nhật lại màu sắc bản đồ
+            }
+        } catch (error) {
+            addMessage('ai', '[HỆ THỐNG LỖI] LLaMA đang quá tải hoặc crash JSON. Vui lòng thử lại.');
+        }
+        document.getElementById('send-btn').disabled = false;
+    }
+
+    document.getElementById('send-btn').onclick = () => {
+        const text = document.getElementById('user-input').value.trim();
+        if (text) sendMessage(text);
+    };
+
+    document.getElementById('user-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') document.getElementById('send-btn').click();
+    });
+
+    document.getElementById('next-btn').onclick = async () => {
+        document.getElementById('next-btn').style.display = 'none';
+        document.getElementById('chat-box').innerHTML = '';
+        chatHistory = [];
+        
+        // Mồi cho AI biết cụm từ hiện tại là gì trong history
+        const res = await fetch('/api/next_phrase');
+        const data = await res.json();
+        if (data.error) {
+            alert(data.error);
+            return;
+        }
+
+        currentNode = data.node;
+        document.getElementById('target-word').textContent = currentNode.chunk;
+        
+        chatHistory.push({
+            "role": "user",
+            "content": `Từ khóa tao cần học là: "${currentNode.chunk}". Bắt đầu Phase 1 đi, cho tao 1 câu ngẫu nhiên chứa nó và hỏi nghĩa!`
+        });
+
+        const chatRes = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({history: chatHistory})
+        });
+        const chatData = await chatRes.json();
+        chatHistory.push({"role": "assistant", "content": chatData.response});
+        addMessage('ai', chatData.response);
+        playTTS(chatData.response);
+    };
+
+    // ==========================================
+    // MODULE BẢN ĐỒ SAO (PLOTLY.JS)
+    // ==========================================
+    
+    async function loadMapData() {
+        const {level, l1, l2} = currentMapLevel;
+        const res = await fetch(`/api/map_data?level=${level}&l1=${l1}&l2=${l2}`);
+        mapDataCache = await res.json();
+        
+        // Cập nhật thống kê
+        const totalMastery = mapDataCache.reduce((sum, p) => sum + p.mastery, 0);
+        document.getElementById('total-mastery').textContent = totalMastery.toFixed(1);
+        
+        renderMap();
+    }
+
+    function renderMap() {
+        const metric = document.getElementById('color-metric').value;
+        const x = mapDataCache.map(p => p.x);
+        const y = mapDataCache.map(p => p.y);
+        const text = mapDataCache.map(p => `<b>${p.chunk}</b><br>Mastery: ${p.mastery}<br>Block: ${p.block}<br>Forgetting: ${p.forgetting.toFixed(2)}`);
+        
+        let marker = { size: 4, opacity: 0.8 };
+
+        if (metric === 'mastery') {
+            marker.color = mapDataCache.map(p => p.norm_mastery);
+            marker.colorscale = 'YlGnBu';
+        } else if (metric === 'forgetting') {
+            // Chặn những node chưa học (forgetting = 9999) để scale màu đẹp hơn
+            const maxF = Math.max(...mapDataCache.filter(p => p.forgetting < 9000).map(p => p.forgetting), 1);
+            marker.color = mapDataCache.map(p => p.forgetting > 9000 ? 0 : p.forgetting / maxF);
+            marker.colorscale = 'Hot';
+        } else if (metric === 'l1') {
+            marker.color = mapDataCache.map(p => p.l1);
+            marker.colorscale = 'Rainbow';
+        }
+
+        const trace = {
+            x: x, y: y, text: text,
+            mode: 'markers', hoverinfo: 'text',
+            type: 'scattergl', // Tối ưu WebGL cho hàng trăm nghìn điểm
+            marker: marker
+        };
+
+        const layout = {
+            paper_bgcolor: '#0f172a', plot_bgcolor: '#0f172a', margin: {t: 0, l: 0, r: 0, b: 0},
+            xaxis: {showgrid: false, zeroline: false, visible: false},
+            yaxis: {showgrid: false, zeroline: false, visible: false},
+            hovermode: 'closest'
+        };
+
+        Plotly.newPlot('map-container', [trace], layout, {responsive: true});
+
+        // Sự kiện click để zoom (Level down)
+        document.getElementById('map-container').on('plotly_click', function(data) {
+            const pointIdx = data.points[0].pointIndex;
+            const node = mapDataCache[pointIdx];
+            
+            if (currentMapLevel.level === 'root') {
+                currentMapLevel = {level: 'l1', l1: node.l1, l2: -1};
+                document.getElementById('nav-breadcrumb').textContent = `Bậc: Đại tinh L1 (${node.l1})`;
+                loadMapData();
+            } else if (currentMapLevel.level === 'l1') {
+                currentMapLevel = {level: 'l2', l1: node.l1, l2: node.l2};
+                document.getElementById('nav-breadcrumb').textContent = `Bậc: Tiểu tinh L2 (${node.l2})`;
+                loadMapData();
+            }
+        });
+    }
+
+    function zoomOut() {
+        if (currentMapLevel.level === 'l2') {
+            currentMapLevel.level = 'l1';
+            currentMapLevel.l2 = -1;
+            document.getElementById('nav-breadcrumb').textContent = `Bậc: Đại tinh L1 (${currentMapLevel.l1})`;
+        } else if (currentMapLevel.level === 'l1') {
+            currentMapLevel = {level: 'root', l1: -1, l2: -1};
+            document.getElementById('nav-breadcrumb').textContent = `Bậc: Ngân Hà (Root)`;
+        }
+        loadMapData();
+    }
+
+    // Khởi tạo
+    loadMapData();
+    document.getElementById('next-btn').click(); // Tự động load từ đầu tiên khi mở app
+</script>
+</body>
+</html>
