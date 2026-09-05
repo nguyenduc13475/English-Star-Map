@@ -274,7 +274,7 @@ async def generate_tts(text: str):
                             ).save(path)
                         except Exception as e:  # noqa: BLE001
                             print(
-                                f"[TTS Warning] Bỏ qua chunk lỗi/dấu câu ({e}): {text_chunk}"
+                                f"[TTS Warning] Bỏ qua chunk lỗi/dấu câu ({e}): {sanitized}"
                             )
 
                 tasks.append(safe_tts(part, voice, rate, part_path))
