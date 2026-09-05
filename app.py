@@ -5,12 +5,14 @@ import os
 import random
 import re
 import time
+import wave
 from collections import defaultdict
 from datetime import datetime, timezone
 
-import edge_tts
+import aiofiles
 import groq
 import numpy as np
+import pyttsx3
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
@@ -43,6 +45,36 @@ else:
         }
         for n in nodes
     }
+
+STATS_FILE = "hierarchy_stats.json"
+if os.path.exists(STATS_FILE):
+    with open(STATS_FILE, "r") as f:
+        hierarchy_stats = json.load(f)
+else:
+    hierarchy_stats = {"l1": {}, "l2": {}, "l3": {}}
+    for n in nodes:
+        p = progress_data[str(n["id"])]
+        m = p["mastery"]
+        for level, cluster in [
+            ("l1", n.get("l1_cluster")),
+            ("l2", n.get("l2_cluster")),
+            ("l3", n.get("l3_cluster")),
+        ]:
+            if cluster == -1 or cluster is None:
+                continue
+            c_str = str(cluster)
+            if c_str not in hierarchy_stats[level]:
+                hierarchy_stats[level][c_str] = {
+                    "mastery": 0,
+                    "maxMastery": -1,
+                    "topWord": "",
+                }
+            hierarchy_stats[level][c_str]["mastery"] += m
+            if m >= hierarchy_stats[level][c_str]["maxMastery"]:
+                hierarchy_stats[level][c_str]["maxMastery"] = m
+                hierarchy_stats[level][c_str]["topWord"] = n["chunk"]
+    with open(STATS_FILE, "w") as f:
+        json.dump(hierarchy_stats, f)
 
 session_state = {
     "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
@@ -209,6 +241,32 @@ async def update_node(req: Request):
 
     save_progress()
 
+    # Propagate stats theo cấp bậc
+    n_updated = nodes[int(node_id)]
+    for level, cluster in [
+        ("l1", n_updated.get("l1_cluster")),
+        ("l2", n_updated.get("l2_cluster")),
+        ("l3", n_updated.get("l3_cluster")),
+    ]:
+        if cluster == -1 or cluster is None:
+            continue
+        c_str = str(cluster)
+        cluster_nodes = [x for x in nodes if x.get(f"{level}_cluster") == cluster]
+        tot, m_max, top_w = 0, -1, ""
+        for cn in cluster_nodes:
+            c_prog = progress_data[str(cn["id"])]["mastery"]
+            tot += c_prog
+            if c_prog >= m_max:
+                m_max = c_prog
+                top_w = cn["chunk"]
+        hierarchy_stats[level][c_str] = {
+            "mastery": tot,
+            "maxMastery": m_max,
+            "topWord": top_w,
+        }
+    async with aiofiles.open(STATS_FILE, "w", encoding="utf-8") as f:
+        await f.write(json.dumps(hierarchy_stats, ensure_ascii=False))
+
     # Dọn dẹp toàn bộ file audio tạm trong static/audio sau mỗi session hoàn thành
     audio_dir = "static/audio"
     if os.path.exists(audio_dir):
@@ -223,24 +281,36 @@ async def update_node(req: Request):
     return {"status": "ok"}
 
 
+def generate_wav(text, lang, path):
+    engine = pyttsx3.init()
+    voices = engine.getProperty("voices")
+    target_voice = None
+    for v in voices:
+        if lang == "en" and "EN-US" in v.id.upper():
+            target_voice = v.id
+            break
+        if lang == "vi" and "VI-VN" in v.id.upper():
+            target_voice = v.id
+            break
+    if target_voice:
+        engine.setProperty("voice", target_voice)
+    engine.save_to_file(text, path)
+    engine.runAndWait()
+
+
 @app.get("/api/tts")
 async def generate_tts(text: str):
     full_hash = hashlib.md5(text.encode()).hexdigest()
-    final_path = f"static/audio/full_{full_hash}.mp3"
+    final_path = f"static/audio/full_{full_hash}.wav"
 
     if not os.path.exists(final_path):
         parts = re.split(r"(<en>.*?</en>)", text, flags=re.DOTALL)
-        tasks = []
         task_meta = []
-        sem = asyncio.Semaphore(
-            4
-        )  # Giới hạn 4 kết nối đồng thời để Microsoft không ban IP/treo mạng
 
         for part in parts:
             part = part.strip()
             if not part:
                 continue
-
             lang = "vi"
             if part.startswith("<en>") and part.endswith("</en>"):
                 lang = "en"
@@ -248,53 +318,43 @@ async def generate_tts(text: str):
                 if not part:
                     continue
 
-            voice = "en-US-ChristopherNeural" if lang == "en" else "vi-VN-NamMinhNeural"
-            rate = "+0%" if lang == "en" else "+10%"
-            part_hash = hashlib.md5((part + voice).encode()).hexdigest()
-            part_path = f"static/audio/part_{part_hash}.mp3"
-
+            part_hash = hashlib.md5((part + lang).encode()).hexdigest()
+            part_path = f"static/audio/part_{part_hash}.wav"
             task_meta.append(part_path)
+
             if not os.path.exists(part_path):
+                sanitized = re.sub(r"[^\w\s.,?!À-ỹ'’]", "", part, flags=re.UNICODE)
+                sanitized = re.sub(r"\s+", " ", sanitized).strip()
+                if not sanitized:
+                    continue
+                await asyncio.to_thread(generate_wav, sanitized, lang, part_path)
 
-                async def safe_tts(text_chunk, voice_id, speed, path):
-                    async with (
-                        sem
-                    ):  # Xếp hàng qua cổng, tránh bị rate-limit gây đứng hình
-                        try:
-                            # Thêm dấu nháy đơn (' và ’) vào regex để giữ nguyên các từ như can't, don't, it's
-                            sanitized = re.sub(
-                                r"[^\w\s.,?!À-ỹ'’]", "", text_chunk, flags=re.UNICODE
-                            )
-                            sanitized = re.sub(r"\s+", " ", sanitized).strip()
-                            if not sanitized:
-                                return
-                            await edge_tts.Communicate(
-                                sanitized, voice_id, rate=speed
-                            ).save(path)
-                        except Exception as e:  # noqa: BLE001
-                            print(
-                                f"[TTS Warning] Bỏ qua chunk lỗi/dấu câu ({e}): {sanitized}"
-                            )
+        def concat_wavs(paths, out):
+            data = []
+            params = None
+            for p in paths:
+                if os.path.exists(p) and os.path.getsize(p) > 0:
+                    try:
+                        with wave.open(p, "rb") as w:
+                            if not params:
+                                params = w.getparams()
+                            data.append(w.readframes(w.getnframes()))
+                    except (wave.Error, OSError) as e:
+                        print(f"[TTS Warning] Không thể ghép file audio chunk {p}: {e}")
+            if params and data:
+                with wave.open(out, "wb") as w:
+                    w.setparams(params)
+                    for d in data:
+                        w.writeframes(d)
 
-                tasks.append(safe_tts(part, voice, rate, part_path))
+        await asyncio.to_thread(concat_wavs, task_meta, final_path)
 
-        # Thực thi tải (Đã có Semaphore chống nghẽn mạng)
-        if tasks:
-            await asyncio.gather(*tasks)
+    return FileResponse(final_path, media_type="audio/wav")
 
-        # NỐI FILE BẰNG NHỊ PHÂN (SIÊU TỐC 0.001s, VỨT LUÔN PYDUB)
-        # Chuẩn MP3 hỗ trợ nối nối tiếp binary mà browser vẫn play ngon mượt
-        def concat_binary(meta_list, out_path):
-            with open(out_path, "wb") as outfile:
-                for p in meta_list:
-                    if os.path.exists(p) and os.path.getsize(p) > 0:
-                        with open(p, "rb") as infile:
-                            outfile.write(infile.read())
 
-        # Chạy nối file nhị phân
-        await asyncio.to_thread(concat_binary, task_meta, final_path)
-
-    return FileResponse(final_path, media_type="audio/mpeg")
+@app.get("/api/stats")
+def get_stats(level: str):
+    return hierarchy_stats.get(level, {})
 
 
 @app.get("/api/map_data")

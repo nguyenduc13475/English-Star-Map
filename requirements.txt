@@ -11,6 +11,4 @@ python-dotenv>=1.0.1
 fastapi>=0.103.0
 uvicorn>=0.23.2
 groq>=0.9.0
-edge-tts>=0.4.3
-aiofiles>=23.2.1
-pydub>=0.25.1
+pyttsx3>=2.90

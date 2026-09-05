@@ -10,7 +10,7 @@
         #left-panel { width: 35%; padding: 20px; background-color: #1e293b; border-right: 1px solid #334155; display: flex; flex-direction: column; z-index: 10;}
         #right-panel { width: 65%; display: flex; flex-direction: column; position: relative; }
         .chat-box { flex-grow: 1; overflow-y: auto; background: #0f172a; padding: 15px; border-radius: 8px; margin-bottom: 15px; display: flex; flex-direction: column; gap: 10px;}
-        .msg { padding: 10px 15px; border-radius: 8px; max-width: 85%; line-height: 1.4; }
+        .msg { padding: 10px 15px; border-radius: 8px; max-width: 85%; line-height: 1.5; font-size: 1.2em; }
         .msg.ai { background: #3b82f6; align-self: flex-start; }
         .msg.user { background: #10b981; align-self: flex-end; }
         .msg.system { background: #64748b; align-self: center; font-size: 0.85em; text-align: center; }
@@ -366,22 +366,13 @@
         renderMap();
     }
     
-    function buildPanel(clusterKey, titleName, onClickCB) {
+    async function buildPanel(clusterKey, titleName, onClickCB) {
         const panel = document.getElementById('l1-panel');
         panel.style.display = 'block';
         panel.innerHTML = `<div style="font-weight:bold; margin-bottom:10px; color:#f59e0b;">Danh sách ${titleName}</div>`;
         
-        const stats = {};
-        mapDataCache.forEach(p => {
-            const c_val = p[clusterKey];
-            if(c_val === -1 || c_val === undefined) return;
-            if(!stats[c_val]) stats[c_val] = { mastery: 0, maxMastery: -1, topWord: '' };
-            stats[c_val].mastery += p.mastery;
-            if (p.mastery >= stats[c_val].maxMastery) {
-                stats[c_val].maxMastery = p.mastery;
-                stats[c_val].topWord = p.chunk;
-            }
-        });
+        const res = await fetch(`/api/stats?level=${clusterKey}`);
+        const stats = await res.json();
         
         Object.keys(stats).sort((a,b) => stats[b].mastery - stats[a].mastery).forEach(c_id => {
             const stat = stats[c_id];
