@@ -285,15 +285,21 @@ def generate_wav(text, lang, path):
     engine = pyttsx3.init()
     voices = engine.getProperty("voices")
     target_voice = None
+
     for v in voices:
-        if lang == "en" and "EN-US" in v.id.upper():
+        name_upper = v.name.upper()
+        if lang == "en" and "ENGLISH" in name_upper:
             target_voice = v.id
             break
-        if lang == "vi" and "VI-VN" in v.id.upper():
+        if lang == "vi" and ("VIETNAMESE" in name_upper or "AN" in name_upper):
             target_voice = v.id
             break
+
     if target_voice:
         engine.setProperty("voice", target_voice)
+    else:
+        print(f"[TTS Warning] Không tìm thấy giọng đọc cho ngôn ngữ: {lang}")
+
     engine.save_to_file(text, path)
     engine.runAndWait()
 
