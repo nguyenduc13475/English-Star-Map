@@ -7,14 +7,17 @@ from datetime import datetime
 
 import edge_tts
 import numpy as np
-import ollama
 import uvicorn
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from groq import Groq
 
+load_dotenv()
 app = FastAPI()
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 os.makedirs("static", exist_ok=True)
 os.makedirs("static/audio", exist_ok=True)
 os.makedirs("templates", exist_ok=True)
@@ -144,11 +147,16 @@ Trả về duy nhất 1 chuỗi JSON hợp lệ với 2 field:
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(history)
 
-    res = ollama.chat(model="llama3", messages=messages, format="json")
     try:
-        reply = json.loads(res["message"]["content"])
-    except:
-        reply = {"response": res["message"]["content"], "score": -1}
+        completion = client.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            messages=messages,
+            response_format={"type": "json_object"},
+            temperature=0.7,
+        )
+        reply = json.loads(completion.choices[0].message.content)
+    except Exception as e:
+        reply = {"response": f"Lỗi Groq API: {e!s}", "score": -1}
     return reply
 
 
