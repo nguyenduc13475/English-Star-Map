@@ -81,7 +81,7 @@
     let currentNode = null;
     let audioObj = null;
     let recognition = null;
-    let currentMapLevel = { level: 'root', l1: -1, l2: -1 };
+    let currentMapLevel = { level: 'root', l1: -1, l2: -1, l3: -1 };
     let mapDataCache = [];
     
     // Timer chống câm lặng
@@ -279,9 +279,14 @@
     // ==========================================
     
     async function loadMapData() {
-        const {level, l1, l2} = currentMapLevel;
-        const res = await fetch(`/api/map_data?level=${level}&l1=${l1}&l2=${l2}`);
+        const {level, l1, l2, l3} = currentMapLevel;
+        const res = await fetch(`/api/map_data?level=${level}&l1=${l1}&l2=${l2}&l3=${l3}`);
         mapDataCache = await res.json();
+        
+        // Ẩn nút "Trở lại" nếu đang ở Root
+        const backBtn = document.querySelector('.map-tools button');
+        if (level === 'root') backBtn.style.display = 'none';
+        else backBtn.style.display = 'block';
         
         const totalMastery = mapDataCache.reduce((sum, p) => sum + p.mastery, 0);
         document.getElementById('total-mastery').textContent = totalMastery.toFixed(1);
@@ -306,7 +311,13 @@
             });
         } else if (level === 'l2') {
             clusterOpt.value = 'l3'; clusterOpt.text = 'Chòm sao (L3)';
-            buildPanel('l3', 'Chòm sao', null);
+            buildPanel('l3', 'Chòm sao', (id) => {
+                currentMapLevel = {level: 'l3', l1: l1, l2: l2, l3: parseInt(id)};
+                document.getElementById('nav-breadcrumb').textContent = `Bậc: Chòm sao L3 (${id})`;
+                loadMapData();
+            });
+        } else if (level === 'l3') {
+            document.getElementById('l1-panel').style.display = 'none';
         }
         
         renderMap();
@@ -398,24 +409,32 @@
             const node = mapDataCache[pointIdx];
             
             if (currentMapLevel.level === 'root') {
-                currentMapLevel = {level: 'l1', l1: node.l1, l2: -1};
+                currentMapLevel = {level: 'l1', l1: node.l1, l2: -1, l3: -1};
                 document.getElementById('nav-breadcrumb').textContent = `Bậc: Đại tinh L1 (${node.l1})`;
                 loadMapData();
             } else if (currentMapLevel.level === 'l1') {
-                currentMapLevel = {level: 'l2', l1: node.l1, l2: node.l2};
+                currentMapLevel = {level: 'l2', l1: node.l1, l2: node.l2, l3: -1};
                 document.getElementById('nav-breadcrumb').textContent = `Bậc: Tiểu tinh L2 (${node.l2})`;
+                loadMapData();
+            } else if (currentMapLevel.level === 'l2') {
+                currentMapLevel = {level: 'l3', l1: node.l1, l2: node.l2, l3: node.l3};
+                document.getElementById('nav-breadcrumb').textContent = `Bậc: Chòm sao L3 (${node.l3})`;
                 loadMapData();
             }
         });
     }
 
     function zoomOut() {
-        if (currentMapLevel.level === 'l2') {
+        if (currentMapLevel.level === 'l3') {
+            currentMapLevel.level = 'l2';
+            currentMapLevel.l3 = -1;
+            document.getElementById('nav-breadcrumb').textContent = `Bậc: Tiểu tinh L2 (${currentMapLevel.l2})`;
+        } else if (currentMapLevel.level === 'l2') {
             currentMapLevel.level = 'l1';
             currentMapLevel.l2 = -1;
             document.getElementById('nav-breadcrumb').textContent = `Bậc: Đại tinh L1 (${currentMapLevel.l1})`;
         } else if (currentMapLevel.level === 'l1') {
-            currentMapLevel = {level: 'root', l1: -1, l2: -1};
+            currentMapLevel = {level: 'root', l1: -1, l2: -1, l3: -1};
             document.getElementById('nav-breadcrumb').textContent = `Bậc: Ngân Hà (Root)`;
         }
         loadMapData();

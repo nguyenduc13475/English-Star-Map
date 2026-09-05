@@ -205,7 +205,7 @@ async def generate_tts(text: str):
 
 
 @app.get("/api/map_data")
-def get_map_data(level: str = "root", l1: int = -1, l2: int = -1):
+def get_map_data(level: str = "root", l1: int = -1, l2: int = -1, l3: int = -1):
     filtered_idx = []
     for i, n in enumerate(nodes):
         if (
@@ -214,6 +214,8 @@ def get_map_data(level: str = "root", l1: int = -1, l2: int = -1):
             and n.get("l1_cluster") == l1
             or level == "l2"
             and n.get("l2_cluster") == l2
+            or level == "l3"
+            and n.get("l3_cluster") == l3
         ):
             filtered_idx.append(i)
 
