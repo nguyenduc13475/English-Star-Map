@@ -286,43 +286,63 @@
         const totalMastery = mapDataCache.reduce((sum, p) => sum + p.mastery, 0);
         document.getElementById('total-mastery').textContent = totalMastery.toFixed(1);
         
-        if (level === 'root') buildL1Panel();
-        else document.getElementById('l1-panel').style.display = 'none';
+        // Động hóa tên Cluster trên Select Box
+        const colorSelect = document.getElementById('color-metric');
+        const clusterOpt = colorSelect.options[2];
+        
+        if (level === 'root') {
+            clusterOpt.value = 'l1'; clusterOpt.text = 'Đại tinh (L1)';
+            buildPanel('l1', 'Đại tinh', (id) => {
+                currentMapLevel = {level: 'l1', l1: parseInt(id), l2: -1};
+                document.getElementById('nav-breadcrumb').textContent = `Bậc: Đại tinh L1 (${id})`;
+                loadMapData();
+            });
+        } else if (level === 'l1') {
+            clusterOpt.value = 'l2'; clusterOpt.text = 'Tiểu tinh (L2)';
+            buildPanel('l2', 'Tiểu tinh', (id) => {
+                currentMapLevel = {level: 'l2', l1: l1, l2: parseInt(id)};
+                document.getElementById('nav-breadcrumb').textContent = `Bậc: Tiểu tinh L2 (${id})`;
+                loadMapData();
+            });
+        } else if (level === 'l2') {
+            clusterOpt.value = 'l3'; clusterOpt.text = 'Chòm sao (L3)';
+            buildPanel('l3', 'Chòm sao', null);
+        }
         
         renderMap();
     }
     
-    function buildL1Panel() {
+    function buildPanel(clusterKey, titleName, onClickCB) {
         const panel = document.getElementById('l1-panel');
         panel.style.display = 'block';
-        panel.innerHTML = '<div style="font-weight:bold; margin-bottom:10px; color:#f59e0b;">Danh sách 10 Đại tinh</div>';
+        panel.innerHTML = `<div style="font-weight:bold; margin-bottom:10px; color:#f59e0b;">Danh sách ${titleName}</div>`;
         
-        // Nhóm dữ liệu theo L1
-        const l1Stats = {};
+        const stats = {};
         mapDataCache.forEach(p => {
-            if(p.l1 === -1) return;
-            if(!l1Stats[p.l1]) l1Stats[p.l1] = { mastery: 0, maxMastery: 0, topWord: '' };
-            l1Stats[p.l1].mastery += p.mastery;
-            if (p.mastery > l1Stats[p.l1].maxMastery) {
-                l1Stats[p.l1].maxMastery = p.mastery;
-                l1Stats[p.l1].topWord = p.chunk;
+            const c_val = p[clusterKey];
+            if(c_val === -1 || c_val === undefined) return;
+            if(!stats[c_val]) stats[c_val] = { mastery: 0, maxMastery: -1, topWord: '' };
+            stats[c_val].mastery += p.mastery;
+            if (p.mastery >= stats[c_val].maxMastery) {
+                stats[c_val].maxMastery = p.mastery;
+                stats[c_val].topWord = p.chunk;
             }
         });
         
-        Object.keys(l1Stats).sort((a,b) => l1Stats[b].mastery - l1Stats[a].mastery).forEach(l1_id => {
-            const stat = l1Stats[l1_id];
+        Object.keys(stats).sort((a,b) => stats[b].mastery - stats[a].mastery).forEach(c_id => {
+            const stat = stats[c_id];
             const div = document.createElement('div');
             div.className = 'l1-item';
             div.innerHTML = `
-                <div class="l1-title">Đại tinh #${l1_id}</div>
+                <div class="l1-title">${titleName} #${c_id}</div>
                 <div>Mastery: ${stat.mastery.toFixed(1)}</div>
                 <div>Top cụm: <i>${stat.topWord || 'None'}</i></div>
             `;
-            div.onclick = () => {
-                currentMapLevel = {level: 'l1', l1: parseInt(l1_id), l2: -1};
-                document.getElementById('nav-breadcrumb').textContent = `Bậc: Đại tinh L1 (${l1_id})`;
-                loadMapData();
-            };
+            if(onClickCB) {
+                div.onclick = () => onClickCB(c_id);
+            } else {
+                div.style.cursor = 'default';
+            }
             panel.appendChild(div);
         });
     }
@@ -351,8 +371,8 @@
             const maxF = Math.max(...mapDataCache.filter(p => p.forgetting < 9000).map(p => p.forgetting), 1);
             marker.color = mapDataCache.map(p => p.forgetting > 9000 ? 0 : p.forgetting / maxF);
             marker.colorscale = 'Hot';
-        } else if (metric === 'l1') {
-            marker.color = mapDataCache.map(p => p.l1);
+        } else if (metric === 'l1' || metric === 'l2' || metric === 'l3') {
+            marker.color = mapDataCache.map(p => p[metric]);
             marker.colorscale = 'Rainbow';
         }
 
