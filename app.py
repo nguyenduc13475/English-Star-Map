@@ -207,6 +207,18 @@ async def update_node(req: Request):
         p["mastery"] = 0
 
     save_progress()
+
+    # Dọn dẹp toàn bộ file audio tạm trong static/audio sau mỗi session hoàn thành
+    audio_dir = "static/audio"
+    if os.path.exists(audio_dir):
+        for file in os.listdir(audio_dir):
+            file_path = os.path.join(audio_dir, file)
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            except Exception as e:  # noqa: BLE001
+                print(f"[Cleanup Warning] Không thể xóa file {file_path}: {e}")
+
     return {"status": "ok"}
 
 
@@ -250,8 +262,15 @@ async def generate_tts(text: str):
                         sem
                     ):  # Xếp hàng qua cổng, tránh bị rate-limit gây đứng hình
                         try:
+                            # Thêm dấu nháy đơn (' và ’) vào regex để giữ nguyên các từ như can't, don't, it's
+                            sanitized = re.sub(
+                                r"[^\w\s.,?!À-ỹ'’]", "", text_chunk, flags=re.UNICODE
+                            )
+                            sanitized = re.sub(r"\s+", " ", sanitized).strip()
+                            if not sanitized:
+                                return
                             await edge_tts.Communicate(
-                                text_chunk, voice_id, rate=speed
+                                sanitized, voice_id, rate=speed
                             ).save(path)
                         except Exception as e:  # noqa: BLE001
                             print(
