@@ -253,7 +253,7 @@ async def generate_tts(text: str):
                             await edge_tts.Communicate(
                                 text_chunk, voice_id, rate=speed
                             ).save(path)
-                        except Exception as e:
+                        except Exception as e:  # noqa: BLE001
                             print(
                                 f"[TTS Warning] Bỏ qua chunk lỗi/dấu câu ({e}): {text_chunk}"
                             )
