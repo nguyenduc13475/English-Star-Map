@@ -246,7 +246,7 @@
             
             chatHistory.push({"role": "assistant", "content": data.response});
             addMessage('ai', data.response);
-            await playTTS(data.response);
+            playTTS(data.response); // Bỏ await, kích hoạt đọc ngay lập tức chạy ngầm
 
             // Phase 2 hoàn thành hoặc Phase 0 (giải thích từ mới) kết thúc
             if (data.score >= 0 || data.score === -2) {
@@ -329,6 +329,8 @@
         chatHistory.push({"role": "assistant", "content": chatData.response});
         addMessage('ai', chatData.response);
         
+        playTTS(chatData.response); // Gọi ngay lập tức không cần chờ đợi ai hết
+        
         // Cắt cầu Session nếu là Phase 0 (dạy từ mới)
         if (isNewWord || chatData.score === -2) {
             isSessionActive = false; // Tắt cờ session để chặn mic và chặn timer câm lặng
@@ -344,11 +346,6 @@
             addMessage('system', `[SESSION END] Đã tiếp thu từ mới. Mastery khởi tạo: 0.5`);
             document.getElementById('next-btn').style.display = 'block';
             loadMapData(); 
-            
-            // Cho máy đọc sau khi đã set cờ false, đảm bảo đọc xong không đếm ngược
-            await playTTS(chatData.response);
-        } else {
-            await playTTS(chatData.response);
         }
     };
 
