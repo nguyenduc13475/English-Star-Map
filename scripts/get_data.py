@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 load_dotenv()
 
-TARGET_CHUNKS = 100000
+TARGET_CHUNKS = 300000
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 UMAP_DIMENSIONS = 10
 HDBSCAN_MIN_CLUSTER_SIZE = 30
@@ -67,7 +67,7 @@ def extract_chunks():
             return len(unique_chunks) >= TARGET_CHUNKS
         return False
 
-    for doc in nlp.pipe(text_generator(), batch_size=20):
+    for doc in nlp.pipe(text_generator(), batch_size=50):
         is_full = False
 
         for sent in doc.sents:
@@ -183,6 +183,11 @@ def build_galaxy():
     embeddings_reduced = reducer.fit_transform(embeddings)
     print(f"[+] Ép chiều xong sau {time.time() - start_time:.2f} giây.")
 
+    print("\n[*] Đang ép về 2D UMAP phục vụ cho UI Bản Đồ Sao...")
+    reducer_2d = umap.UMAP(n_neighbors=30, n_components=2, metric="cosine")
+    embeddings_2d = reducer_2d.fit_transform(embeddings)
+    np.save("embeddings_2d.npy", embeddings_2d)
+
     print("\n[4] Khởi động HDBSCAN quét mật độ xây cây phân cấp...")
     start_time = time.time()
     clusterer = hdbscan.HDBSCAN(
@@ -202,57 +207,80 @@ def build_galaxy():
     # Tầng 3 (Chòm sao Lá): Lấy tâm (centroid) của các cụm HDBSCAN
     leaf_centroids = []
     for label in valid_labels:
-        # Dùng embeddings gốc (không gian AI đa chiều) để đảm bảo ngữ nghĩa chuẩn nhất
         cluster_points = embeddings[labels == label]
         leaf_centroids.append(cluster_points.mean(axis=0))
     leaf_centroids = np.array(leaf_centroids)
 
-    # Tầng 2 (Tiểu tinh): Gom lên thành 100 cụm
-    n_sub = min(100, num_leaf_clusters)
-    print(
-        f"[*] Đang gom {num_leaf_clusters} Chòm sao thành {n_sub} Tiểu tinh (Layer 2)..."
-    )
+    n_sub = min(200, num_leaf_clusters)
     kmeans_l2 = KMeans(n_clusters=n_sub, random_state=42, n_init="auto")
     l2_mapping = kmeans_l2.fit_predict(leaf_centroids)
 
-    # Lấy tâm của Tầng 2 để gom tiếp lên Tầng 1
     l2_centroids = []
     for i in range(n_sub):
         points = leaf_centroids[l2_mapping == i]
         l2_centroids.append(points.mean(axis=0))
     l2_centroids = np.array(l2_centroids)
 
-    # Tầng 1 (Đại tinh): Gom lên thành 10 cụm
     n_super = min(10, n_sub)
-    print(f"[*] Đang gom {n_sub} Tiểu tinh thành {n_super} Đại tinh (Layer 1)...")
     kmeans_l1 = KMeans(n_clusters=n_super, random_state=42, n_init="auto")
     l1_mapping = kmeans_l1.fit_predict(l2_centroids)
 
-    # Tạo từ điển map ID nhanh (Layer 3 -> Layer 2 -> Layer 1)
+    l1_centroids = []
+    for i in range(n_super):
+        points = l2_centroids[l1_mapping == i]
+        l1_centroids.append(points.mean(axis=0))
+    l1_centroids = np.array(l1_centroids)
+
     label_to_l2 = {valid_labels[i]: l2_mapping[i] for i in range(num_leaf_clusters)}
     l2_to_l1 = {i: l1_mapping[i] for i in range(n_sub)}
 
     type_map = {"conversational_routine": 0, "grammatical_collocation": 1}
     galaxy_nodes = []
-    for c, m, label in zip(chunks, metadata, labels):
+    for idx, (c, m, label) in enumerate(zip(chunks, metadata, labels)):
         is_noise = label == -1
+
+        dist_to_l3 = (
+            float(
+                np.linalg.norm(
+                    embeddings[idx] - leaf_centroids[valid_labels.index(label)]
+                )
+            )
+            if not is_noise
+            else 999.0
+        )
+
+        l2_id = int(label_to_l2[label]) if not is_noise else -1
+        l1_id = int(l2_to_l1[l2_id]) if not is_noise else -1
+        dist_to_l2 = (
+            float(np.linalg.norm(embeddings[idx] - l2_centroids[l2_id]))
+            if not is_noise
+            else 999.0
+        )
+        dist_to_l1 = (
+            float(np.linalg.norm(embeddings[idx] - l1_centroids[l1_id]))
+            if not is_noise
+            else 999.0
+        )
+
         node = {
+            "id": idx,
             "chunk": c,
             "type": type_map.get(m["type"], 0),
             "l3_cluster": int(label),
-            "l2_cluster": int(label_to_l2[label]) if not is_noise else -1,
-            "l1_cluster": int(l2_to_l1[label_to_l2[label]]) if not is_noise else -1,
+            "l2_cluster": l2_id,
+            "l1_cluster": l1_id,
+            "dist_to_l3": dist_to_l3,
+            "dist_to_l2": dist_to_l2,
+            "dist_to_l1": dist_to_l1,
         }
         galaxy_nodes.append(node)
 
     with open("galaxy_nodes.json", "w", encoding="utf-8") as f:
         json.dump(galaxy_nodes, f, ensure_ascii=False)
 
+    print("\n[V] Hoàn tất! File cây cấu trúc, Nodes và Embeddings 2D/Raw đã được lưu.")
     print(
-        "\n[V] Hoàn tất! File cây cấu trúc lưu tại 'galaxy_tree.csv' và 'galaxy_nodes.json'."
-    )
-    print(
-        "=> BẢN ĐỒ NGÂN HÀ ĐÃ CHUẨN: 10 Đại tinh -> 100 Tiểu tinh -> Các Chòm sao HDBSCAN."
+        "=> BẢN ĐỒ NGÂN HÀ ĐÃ CHUẨN: 10 Đại tinh -> 200 Tiểu tinh -> Các Chòm sao HDBSCAN."
     )
 
 
