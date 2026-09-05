@@ -164,27 +164,62 @@
         box.scrollTop = box.scrollHeight;
     }
 
+    // Mồi sẵn danh sách giọng đọc của trình duyệt để không bị delay lần đầu
+    window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.getVoices(); };
+
     async function playTTS(text) {
         return new Promise((resolve) => {
-            if (audioObj) audioObj.pause();
+            if (audioObj) { audioObj.pause(); audioObj = null; }
+            window.speechSynthesis.cancel(); // Ngắt giọng cũ nếu đang nói dở
             if (recognition) recognition.stop();
             resetSilenceTimer();
-            
-            const url = `/api/tts?text=${encodeURIComponent(text)}`;
-            audioObj = new Audio(url);
-            audioObj.onended = () => {
-                audioObj = null;
+
+            // Lấy bộ lọc giọng xịn nhất có sẵn trên máy
+            const voices = window.speechSynthesis.getVoices();
+            const enVoice = voices.find(v => v.lang.includes('en') && (v.name.includes('David') || v.name.includes('Zira') || v.name.includes('English'))) || voices.find(v => v.lang.includes('en'));
+            const viVoice = voices.find(v => v.lang.includes('vi') || v.name.includes('An')) || voices.find(v => v.lang.includes('vi'));
+
+            // Tách câu y hệt Python nhưng bằng Regex JS
+            const parts = text.split(/(<en>.*?<\/en>)/g);
+            let utterances = [];
+
+            parts.forEach(part => {
+                let content = part.trim();
+                if (!content) return;
+                
+                let lang = 'vi';
+                if (content.startsWith('<en>') && content.endsWith('</en>')) {
+                    lang = 'en';
+                    content = content.replace('<en>', '').replace('</en>', '').trim();
+                }
+                if (!content) return;
+
+                let ut = new SpeechSynthesisUtterance(content);
+                ut.voice = (lang === 'en') ? enVoice : viVoice;
+                ut.lang = (lang === 'en') ? 'en-US' : 'vi-VN';
+                // Nhấn nhá tốc độ, Tiếng Việt cho đọc nhanh lên chút cho tự nhiên
+                ut.rate = (lang === 'en') ? 1.0 : 1.1; 
+                
+                utterances.push(ut);
+            });
+
+            if (utterances.length === 0) {
+                startSilenceTimer();
+                resolve();
+                return;
+            }
+
+            // Bắt sự kiện đọc xong ở CỤM CUỐI CÙNG để kích hoạt mic và đồng hồ
+            utterances[utterances.length - 1].onend = () => {
                 if (document.getElementById('use-mic').checked && recognition && isSessionActive) {
                     try { recognition.start(); } catch(e){}
                 }
-                startSilenceTimer(); 
-                resolve();
-            };
-            audioObj.play().catch(e => {
-                console.error("Audio error", e);
                 startSilenceTimer();
                 resolve();
-            });
+            };
+
+            // Queue cho trình duyệt tự đọc nối tiếp nhau
+            utterances.forEach(u => window.speechSynthesis.speak(u));
         });
     }
 

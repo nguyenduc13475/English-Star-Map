@@ -1,22 +1,17 @@
-import asyncio
-import hashlib
 import json
 import os
 import random
-import re
 import time
-import wave
 from collections import defaultdict
 from datetime import datetime, timezone
 
 import aiofiles
 import groq
 import numpy as np
-import pyttsx3
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from groq import Groq
@@ -279,83 +274,6 @@ async def update_node(req: Request):
                 print(f"[Cleanup Warning] Không thể xóa file {file_path}: {e}")
 
     return {"status": "ok"}
-
-
-def generate_wav(text, lang, path):
-    engine = pyttsx3.init()
-    voices = engine.getProperty("voices")
-    target_voice = None
-
-    for v in voices:
-        name_upper = v.name.upper()
-        if lang == "en" and "ENGLISH" in name_upper:
-            target_voice = v.id
-            break
-        if lang == "vi" and ("VIETNAMESE" in name_upper or "AN" in name_upper):
-            target_voice = v.id
-            break
-
-    if target_voice:
-        engine.setProperty("voice", target_voice)
-    else:
-        print(f"[TTS Warning] Không tìm thấy giọng đọc cho ngôn ngữ: {lang}")
-
-    engine.save_to_file(text, path)
-    engine.runAndWait()
-
-
-@app.get("/api/tts")
-async def generate_tts(text: str):
-    full_hash = hashlib.md5(text.encode()).hexdigest()
-    final_path = f"static/audio/full_{full_hash}.wav"
-
-    if not os.path.exists(final_path):
-        parts = re.split(r"(<en>.*?</en>)", text, flags=re.DOTALL)
-        task_meta = []
-
-        for part in parts:
-            part = part.strip()
-            if not part:
-                continue
-            lang = "vi"
-            if part.startswith("<en>") and part.endswith("</en>"):
-                lang = "en"
-                part = part[4:-5].strip()
-                if not part:
-                    continue
-
-            part_hash = hashlib.md5((part + lang).encode()).hexdigest()
-            part_path = f"static/audio/part_{part_hash}.wav"
-            task_meta.append(part_path)
-
-            if not os.path.exists(part_path):
-                sanitized = re.sub(r"[^\w\s.,?!À-ỹ'’]", "", part, flags=re.UNICODE)
-                sanitized = re.sub(r"\s+", " ", sanitized).strip()
-                if not sanitized:
-                    continue
-                await asyncio.to_thread(generate_wav, sanitized, lang, part_path)
-
-        def concat_wavs(paths, out):
-            data = []
-            params = None
-            for p in paths:
-                if os.path.exists(p) and os.path.getsize(p) > 0:
-                    try:
-                        with wave.open(p, "rb") as w:
-                            if not params:
-                                params = w.getparams()
-                            data.append(w.readframes(w.getnframes()))
-                    except (wave.Error, OSError) as e:
-                        print(f"[TTS Warning] Không thể ghép file audio chunk {p}: {e}")
-            if params and data:
-                with wave.open(out, "wb") as w:
-                    w.setparams(params)
-                    for d in data:
-                        w.writeframes(d)
-
-        await asyncio.to_thread(concat_wavs, task_meta, final_path)
-
-    return FileResponse(final_path, media_type="audio/wav")
 
 
 @app.get("/api/stats")
