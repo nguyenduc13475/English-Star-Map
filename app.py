@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import random
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -216,10 +217,8 @@ def get_map_data(level: str = "root", l1: int = -1, l2: int = -1):
         ):
             filtered_idx.append(i)
 
-    # Chống ngợp trình duyệt và giảm đè chéo: Chỉ lấy mẫu 15k điểm khi ở Root
-    import random
-
-    if level == "root" and len(filtered_idx) > 15000:
+    # Chống ngợp trình duyệt: Giới hạn 15k điểm cho tất cả các cấp, trừ cấp chòm sao (l3)
+    if level != "l3" and len(filtered_idx) > 15000:
         filtered_idx = random.sample(filtered_idx, 15000)
 
     max_mastery = max((d["mastery"] for d in progress_data.values()), default=1) or 1
