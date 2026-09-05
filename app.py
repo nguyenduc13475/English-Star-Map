@@ -143,7 +143,7 @@ QUY TRÌNH HỌC (2 Phase liên tiếp):
 QUY TẮC PHẢN HỒI JSON:
 Trả về duy nhất 1 chuỗi JSON hợp lệ với 2 field:
 - "response": Lời mày nói với tao (Văn phong mỏ hỗn, tự nhiên, sinh động để tao nghe qua Audio).
-- "score": Điểm số (0-10). Nếu ở Phase 1 hoặc chưa xong Phase 2, để -1. Nếu tao đã hoàn thành đối đáp Phase 2, chốt điểm (0-10).
+- "score": Điểm số. Nếu tao yêu cầu giải thích từ mới (Phase 0), trả về -2. Nếu đang ở Phase 1 hoặc chưa xong Phase 2, để -1. Nếu tao đã hoàn thành đối đáp Phase 2, chốt điểm (0-10).
 """
 
     messages = [{"role": "system", "content": system_prompt}]
@@ -166,11 +166,14 @@ Trả về duy nhất 1 chuỗi JSON hợp lệ với 2 field:
 async def update_node(req: Request):
     data = await req.json()
     node_id = str(data["id"])
-    score = data["score"]  # Điểm từ 0-10
+    score = data["score"]  # Điểm từ 0-10, hoặc -2 cho từ mới
     p = progress_data[node_id]
     p["last_studied"] = time.time()
 
-    if score >= 7:
+    if score == -2:  # Lần đầu học
+        p["mastery"] = 0.5  # Giá trị định sẵn thấp
+        p["study_count"] = 1
+    elif score >= 7:
         p["mastery"] += (score - 5) * 0.5
         p["study_count"] = 0
     else:

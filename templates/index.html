@@ -208,8 +208,8 @@
             addMessage('ai', data.response);
             await playTTS(data.response);
 
-            // Phase 2 hoàn thành
-            if (data.score >= 0) {
+            // Phase 2 hoàn thành hoặc Phase 0 (giải thích từ mới) kết thúc
+            if (data.score >= 0 || data.score === -2) {
                 isSessionActive = false;
                 resetSilenceTimer();
                 if (recognition) recognition.stop();
@@ -220,7 +220,12 @@
                     body: JSON.stringify({id: currentNode.id, score: data.score})
                 });
                 
-                addMessage('system', `[SESSION END] Điểm đánh giá: ${data.score}/10`);
+                if (data.score === -2) {
+                    addMessage('system', `[SESSION END] Đã tiếp thu từ mới. Mastery khởi tạo: 0.5`);
+                } else {
+                    addMessage('system', `[SESSION END] Điểm đánh giá: ${data.score}/10`);
+                }
+                
                 document.getElementById('next-btn').style.display = 'block';
                 loadMapData(); 
             }
@@ -258,10 +263,19 @@
         currentNode = data.node;
         document.getElementById('target-word').textContent = currentNode.chunk;
         
-        chatHistory.push({
-            "role": "user",
-            "content": `Từ khóa tao cần học là: "${currentNode.chunk}". Bắt đầu Phase 1 đi, cho tao 1 câu ngẫu nhiên chứa nó và hỏi nghĩa!`
-        });
+        const isNewWord = data.stats.last_studied === 0;
+
+        if (isNewWord) {
+            chatHistory.push({
+                "role": "user",
+                "content": `Từ khóa tao cần học là: "${currentNode.chunk}". Đây là lần đầu tiên tao học cụm này, hãy giải thích ý nghĩa nôm na của nó, kèm theo ví dụ ứng dụng cụm từ này cực kỳ mỏ hỗn / chửi rủa theo phong cách của mày. NHỚ LÀ CHỈ GIẢI THÍCH, KHÔNG ĐƯỢC ĐẶT CÂU HỎI KIỂM TRA TAO, VÀ CHỐT SCORE LÀ -2 Ở TRONG JSON RESPONSE!`
+            });
+        } else {
+            chatHistory.push({
+                "role": "user",
+                "content": `Từ khóa tao cần học là: "${currentNode.chunk}". Bắt đầu Phase 1 đi, cho tao 1 câu ngẫu nhiên chứa nó và hỏi nghĩa!`
+            });
+        }
 
         const chatRes = await fetch('/api/chat', {
             method: 'POST',
