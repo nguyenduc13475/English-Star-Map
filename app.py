@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -224,8 +225,6 @@ async def update_node(req: Request):
 
 @app.get("/api/tts")
 async def generate_tts(text: str):
-    import re
-
     full_hash = hashlib.md5(text.encode()).hexdigest()
     final_path = f"static/audio/full_{full_hash}.mp3"
 
