@@ -313,9 +313,20 @@ def get_map_data(level: str = "root", l1: int = -1, l2: int = -1, l3: int = -1):
         ):
             filtered_idx.append(i)
 
-    # Chống ngợp trình duyệt: Giới hạn 15k điểm cho tất cả các cấp, trừ cấp chòm sao (l3)
+    # Chống ngợp trình duyệt: Giới hạn 15k điểm, ưu tiên tuyệt đối giữ lại các từ đã học (mastery > 0)
     if level != "l3" and len(filtered_idx) > 15000:
-        filtered_idx = random.sample(filtered_idx, 15000)
+        learned_idx = [
+            i for i in filtered_idx if progress_data[str(nodes[i]["id"])]["mastery"] > 0
+        ]
+        unlearned_idx = [
+            i
+            for i in filtered_idx
+            if progress_data[str(nodes[i]["id"])]["mastery"] == 0
+        ]
+        max_unlearned = max(0, 15000 - len(learned_idx))
+        if len(unlearned_idx) > max_unlearned:
+            unlearned_idx = random.sample(unlearned_idx, max_unlearned)
+        filtered_idx = learned_idx + unlearned_idx
 
     max_mastery = max((d["mastery"] for d in progress_data.values()), default=1) or 1
 
@@ -342,7 +353,9 @@ def get_map_data(level: str = "root", l1: int = -1, l2: int = -1, l3: int = -1):
                 "block": p["block_threshold"],
             }
         )
-    return points
+
+    total_mastery = get_total_mastery()
+    return {"points": points, "total_mastery": total_mastery}
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
