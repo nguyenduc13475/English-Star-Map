@@ -3,9 +3,10 @@ import json
 import os
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 
 import edge_tts
+import groq
 import numpy as np
 import uvicorn
 from dotenv import load_dotenv
@@ -21,13 +22,9 @@ client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 os.makedirs("static", exist_ok=True)
 os.makedirs("static/audio", exist_ok=True)
 os.makedirs("templates", exist_ok=True)
-try:
-    with open("galaxy_nodes.json", "r", encoding="utf-8") as f:
-        nodes = json.load(f)
-    embeddings_2d = np.load("embeddings_2d.npy")
-except:
-    nodes = []
-    embeddings_2d = []
+with open("galaxy_nodes.json", "r", encoding="utf-8") as f:
+    nodes = json.load(f)
+embeddings_2d = np.load("embeddings_2d.npy")
 
 PROGRESS_FILE = "user_progress.json"
 if os.path.exists(PROGRESS_FILE):
@@ -44,7 +41,10 @@ else:
         for n in nodes
     }
 
-session_state = {"date": datetime.now().strftime("%Y-%m-%d"), "count_today": 0}
+session_state = {
+    "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+    "count_today": 0,
+}
 
 
 def save_progress():
@@ -66,7 +66,7 @@ def calc_forgetting(node_id):
 
 @app.get("/api/next_phrase")
 def get_next_phrase():
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if session_state["date"] != today:
         session_state["date"] = today
         session_state["count_today"] = 0
@@ -133,15 +133,16 @@ async def chat_ai(req: Request):
     data = await req.json()
     history = data.get("history", [])
     system_prompt = """
-Mày là một giáo viên tiếng Anh cực kỳ mỏ hỗn, cục súc, văng tục thoải mái (fuck, shit, ngu đần...) nhưng dạy rất chuẩn.
+Mày là một giáo viên tiếng Anh cực kỳ mỏ hỗn, cục súc, văng tục thoải mái (fuck, shit, ngu đần,...) nhưng dạy kiến thức cực kỳ chuẩn xác.
 QUY TRÌNH HỌC (2 Phase liên tiếp):
-- Phase 1 (Đoán nghĩa): Mày đưa ra 1 câu tiếng Anh ngẫu nhiên chứa cụm từ target. Hỏi tao nghĩa của cụm từ đó là gì. Chờ tao trả lời. Nếu tao trả lời sai hoặc lạc đề, chửi tao là thằng đần, ngu dốt, và giải thích nghĩa đúng. Nếu tao đúng, khen kiểu bố đời.
-- Phase 2 (Tạo câu): Sau khi xong Phase 1, mày đưa ra một tình huống thực tế bằng tiếng Việt hoặc Anh, bắt tao phải tự tạo 1 câu tiếng Anh có chứa cụm từ target đó để đối đáp. Nếu tao xài sai ngữ pháp hoặc sai thì, chửi sấp mặt.
+- Phase 1 (Đoán nghĩa): Mày sinh ra 1 câu tiếng Anh ngẫu nhiên chứa cụm từ target. Hỏi tao nghĩa cụm từ đó. Chờ tao trả lời. Nếu sai/lạc đề, chửi sấp mặt và giải thích đúng. Nếu đúng, khen kiểu bố đời. 
+- Phase 2 (Tạo câu): Mày tạo 1 tình huống thực tế bựa/đời thường bắt tao dùng cụm target để đối đáp. Nếu tao dùng sai thì (tense) hoặc sai ngữ pháp, chửi thậm tệ.
+*LƯU Ý ĐẶC BIỆT*: Nếu tao gửi tin nhắn có nội dung "[SYSTEM_SILENCE]", có nghĩa là tao đang câm như hến không trả lời kịp. Hãy chửi tao là chậm chạp, ngu đần, lề mề và giục tao trả lời nhanh lên.
 
 QUY TẮC PHẢN HỒI JSON:
 Trả về duy nhất 1 chuỗi JSON hợp lệ với 2 field:
-- "response": Lời mày nói với tao (bao gồm cả chửi, giải thích, hoặc đặt câu hỏi tiếp theo). Phải giống văn nói tự nhiên để tao nghe qua Audio.
-- "score": Điểm số (0-10). Nếu đang ở Phase 1 hoặc tao chưa hoàn thành Phase 2, để là -1. Nếu tao đã hoàn thành Phase 2 (đối đáp tình huống xong), hãy chốt điểm từ 0 đến 10 dựa vào độ chuẩn xác ngữ pháp và dùng từ.
+- "response": Lời mày nói với tao (Văn phong mỏ hỗn, tự nhiên, sinh động để tao nghe qua Audio).
+- "score": Điểm số (0-10). Nếu ở Phase 1 hoặc chưa xong Phase 2, để -1. Nếu tao đã hoàn thành đối đáp Phase 2, chốt điểm (0-10).
 """
 
     messages = [{"role": "system", "content": system_prompt}]
@@ -155,7 +156,7 @@ Trả về duy nhất 1 chuỗi JSON hợp lệ với 2 field:
             temperature=0.7,
         )
         reply = json.loads(completion.choices[0].message.content)
-    except Exception as e:
+    except groq.GroqError as e:
         reply = {"response": f"Lỗi Groq API: {e!s}", "score": -1}
     return reply
 

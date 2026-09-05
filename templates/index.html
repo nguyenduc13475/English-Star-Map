@@ -7,23 +7,36 @@
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0f172a; color: #e2e8f0; display: flex; height: 100vh; overflow: hidden; }
-        #left-panel { width: 35%; padding: 20px; background-color: #1e293b; border-right: 1px solid #334155; display: flex; flex-direction: column; }
+        #left-panel { width: 35%; padding: 20px; background-color: #1e293b; border-right: 1px solid #334155; display: flex; flex-direction: column; z-index: 10;}
         #right-panel { width: 65%; display: flex; flex-direction: column; position: relative; }
         .chat-box { flex-grow: 1; overflow-y: auto; background: #0f172a; padding: 15px; border-radius: 8px; margin-bottom: 15px; display: flex; flex-direction: column; gap: 10px;}
-        .msg { padding: 10px 15px; border-radius: 8px; max-width: 85%; }
+        .msg { padding: 10px 15px; border-radius: 8px; max-width: 85%; line-height: 1.4; }
         .msg.ai { background: #3b82f6; align-self: flex-start; }
         .msg.user { background: #10b981; align-self: flex-end; }
+        .msg.system { background: #64748b; align-self: center; font-size: 0.85em; text-align: center; }
         .controls { display: flex; gap: 10px; align-items: center; }
         input[type="text"] { flex-grow: 1; padding: 10px; border-radius: 5px; border: 1px solid #475569; background: #0f172a; color: white; }
-        button { padding: 10px 20px; background: #3b82f6; border: none; color: white; border-radius: 5px; cursor: pointer; font-weight: bold;}
+        button { padding: 10px 20px; background: #3b82f6; border: none; color: white; border-radius: 5px; cursor: pointer; font-weight: bold; transition: 0.2s;}
         button:hover { background: #2563eb; }
         button:disabled { background: #64748b; cursor: not-allowed; }
         #map-container { flex-grow: 1; width: 100%; }
+        
+        /* Cụm công cụ bản đồ */
         .map-tools { position: absolute; top: 10px; right: 10px; background: rgba(30, 41, 59, 0.9); padding: 10px; border-radius: 8px; z-index: 100; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        .map-tools select, .map-tools button { padding: 5px; margin-bottom: 5px; width: 100%; }
-        .stats-bar { background: #1e293b; padding: 10px; font-size: 0.9em; display: flex; justify-content: space-between; border-bottom: 1px solid #334155;}
+        .map-tools select, .map-tools button { padding: 5px; margin-bottom: 5px; width: 100%; background: #334155; color: white; border: 1px solid #475569; border-radius: 4px;}
+        
+        /* Thanh thống kê */
+        .stats-bar { background: #1e293b; padding: 10px 20px; font-size: 0.9em; display: flex; justify-content: space-between; border-bottom: 1px solid #334155;}
         #current-target { color: #f59e0b; font-weight: bold; font-size: 1.2em; margin-bottom: 10px;}
-        .recording-indicator { color: #ef4444; font-weight: bold; display: none; }
+        .recording-indicator { color: #ef4444; font-weight: bold; display: none; animation: blink 1s infinite;}
+        
+        /* Bảng điều khiển Đại tinh (L1) */
+        #l1-panel { position: absolute; top: 50px; left: 10px; background: rgba(30, 41, 59, 0.9); padding: 10px; border-radius: 8px; z-index: 100; max-height: 80%; overflow-y: auto; display: none;}
+        .l1-item { padding: 8px; margin-bottom: 5px; background: #334155; border-radius: 5px; cursor: pointer; font-size: 0.85em; transition: 0.2s;}
+        .l1-item:hover { background: #475569; border-left: 3px solid #3b82f6; }
+        .l1-title { font-weight: bold; color: #38bdf8; }
+        
+        @keyframes blink { 50% { opacity: 0; } }
     </style>
 </head>
 <body>
@@ -34,32 +47,32 @@
     <div class="chat-box" id="chat-box"></div>
     
     <div class="controls">
-        <label><input type="checkbox" id="use-mic"> Dùng Mic</label>
+        <label><input type="checkbox" id="use-mic"> Dùng Mic (Tự động gửi)</label>
         <span class="recording-indicator" id="recording-dot">🎤 Đang nghe...</span>
     </div>
     <div class="controls" style="margin-top: 10px;">
         <input type="text" id="user-input" placeholder="Gõ câu trả lời hoặc nói vào mic...">
         <button id="send-btn">Gửi</button>
     </div>
-    <button id="next-btn" style="margin-top: 10px; width: 100%; background: #f59e0b;">Học cụm tiếp theo</button>
+    <button id="next-btn" style="margin-top: 15px; width: 100%; background: #f59e0b; padding: 15px;">🚀 Bắt đầu / Học cụm tiếp theo</button>
 </div>
 
 <div id="right-panel">
     <div class="stats-bar">
-        <span>Tiến trình (Total Mastery): <strong id="total-mastery">0</strong></span>
-        <span id="nav-breadcrumb">Bậc: Ngân Hà (Root)</span>
+        <span>Total Mastery: <strong id="total-mastery" style="color: #10b981;">0</strong></span>
+        <span id="nav-breadcrumb" style="font-weight: bold; color: #e2e8f0;">Bậc: Ngân Hà (Root)</span>
     </div>
     <div class="map-tools">
-        <label>Tô màu theo:</label>
+        <label style="font-size: 0.85em;">Tô màu theo:</label>
         <select id="color-metric" onchange="renderMap()">
-            <select id="color-metric" onchange="renderMap()">
-                <option value="mastery">Mastery (Độ thông thạo)</option>
-                <option value="forgetting">Forgetting (Sắp quên)</option>
-                <option value="l1">Đại tinh (L1)</option>
-            </select>
+            <option value="mastery">Mastery (Độ thông thạo)</option>
+            <option value="forgetting">Forgetting (Sắp quên)</option>
+            <option value="l1">Đại tinh (L1 Cluster)</option>
         </select>
         <button onclick="zoomOut()">🔙 Trở lại bậc trên</button>
     </div>
+    
+    <div id="l1-panel"></div>
     <div id="map-container"></div>
 </div>
 
@@ -68,24 +81,32 @@
     let currentNode = null;
     let audioObj = null;
     let recognition = null;
-    let isRecording = false;
-    let silenceTimeout = null;
     let currentMapLevel = { level: 'root', l1: -1, l2: -1 };
     let mapDataCache = [];
+    
+    // Timer chống câm lặng
+    let silenceTimeout = null;
+    const SILENCE_LIMIT_MS = 15000; // 15 giây không phản hồi sẽ bị AI chửi
+    let isSessionActive = false;
 
-    // Khởi tạo Web Speech API cho chức năng thu âm
+    // Format ngày hiển thị hover
+    function formatDate(timestamp) {
+        if (!timestamp || timestamp === 0) return "Chưa học";
+        return new Date(timestamp * 1000).toLocaleDateString('vi-VN');
+    }
+
     if ('webkitSpeechRecognition' in window) {
         recognition = new webkitSpeechRecognition();
         recognition.continuous = true;
         recognition.interimResults = true;
-        recognition.lang = 'en-US'; // Hoặc 'vi-VN' tùy theo Phase
+        recognition.lang = 'en-US'; 
 
         recognition.onstart = function() {
             document.getElementById('recording-dot').style.display = 'inline';
         };
 
         recognition.onresult = function(event) {
-            clearTimeout(silenceTimeout); // Reset timeout nếu đang nói
+            resetSilenceTimer(); // Có tín hiệu nói là hủy timer chửi
             let finalTranscript = '';
             for (let i = event.resultIndex; i < event.results.length; ++i) {
                 if (event.results[i].isFinal) {
@@ -94,26 +115,46 @@
             }
             if(finalTranscript !== '') {
                 document.getElementById('user-input').value = finalTranscript;
-                // Timeout im lặng 2 giây thì tự gửi
-                silenceTimeout = setTimeout(() => {
-                    document.getElementById('send-btn').click();
-                }, 2000);
+                // Auto send khi kết thúc câu nói 1.5s
+                setTimeout(() => {
+                    if(!document.getElementById('send-btn').disabled) {
+                        document.getElementById('send-btn').click();
+                    }
+                }, 1500);
             }
         };
 
         recognition.onend = function() {
             document.getElementById('recording-dot').style.display = 'none';
-            if (document.getElementById('use-mic').checked && !audioObj) {
-                recognition.start(); // Tự động bật lại nếu đang tích chọn mic
+            if (document.getElementById('use-mic').checked && !audioObj && isSessionActive) {
+                try { recognition.start(); } catch(e){}
             }
         };
     }
+
+    // Logic Timer câm lặng
+    function startSilenceTimer() {
+        if (!isSessionActive) return;
+        clearTimeout(silenceTimeout);
+        silenceTimeout = setTimeout(() => {
+            if (isSessionActive) {
+                sendMessage("[SYSTEM_SILENCE]");
+            }
+        }, SILENCE_LIMIT_MS);
+    }
+
+    function resetSilenceTimer() {
+        clearTimeout(silenceTimeout);
+    }
+    
+    // Ghi nhận sự kiện gõ phím để chặn AI chửi
+    document.getElementById('user-input').addEventListener('input', resetSilenceTimer);
 
     function addMessage(role, text) {
         const box = document.getElementById('chat-box');
         const div = document.createElement('div');
         div.className = `msg ${role}`;
-        div.textContent = text;
+        div.textContent = text === "[SYSTEM_SILENCE]" ? "(Bạn im lặng quá lâu...)" : text;
         box.appendChild(div);
         box.scrollTop = box.scrollHeight;
     }
@@ -121,28 +162,36 @@
     async function playTTS(text) {
         return new Promise((resolve) => {
             if (audioObj) audioObj.pause();
-            if (recognition) recognition.stop(); // Dừng nghe khi AI nói
+            if (recognition) recognition.stop();
+            resetSilenceTimer();
             
             const url = `/api/tts?text=${encodeURIComponent(text)}`;
             audioObj = new Audio(url);
             audioObj.onended = () => {
                 audioObj = null;
-                if (document.getElementById('use-mic').checked && recognition) {
-                    recognition.start(); // Tiếp tục nghe sau khi AI nói xong
+                if (document.getElementById('use-mic').checked && recognition && isSessionActive) {
+                    try { recognition.start(); } catch(e){}
                 }
+                startSilenceTimer(); // Bắt đầu đếm giờ chờ người dùng trả lời
                 resolve();
             };
             audioObj.play().catch(e => {
                 console.error("Audio error", e);
+                startSilenceTimer();
                 resolve();
             });
         });
     }
 
     async function sendMessage(text) {
-        if (!currentNode) return;
+        if (!currentNode || !isSessionActive) return;
+        
+        resetSilenceTimer();
         addMessage('user', text);
-        document.getElementById('user-input').value = '';
+        
+        if (text !== "[SYSTEM_SILENCE]") {
+            document.getElementById('user-input').value = '';
+        }
         document.getElementById('send-btn').disabled = true;
 
         chatHistory.push({"role": "user", "content": text});
@@ -151,9 +200,7 @@
             const res = await fetch('/api/chat', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    history: chatHistory
-                })
+                body: JSON.stringify({ history: chatHistory })
             });
             const data = await res.json();
             
@@ -161,19 +208,25 @@
             addMessage('ai', data.response);
             await playTTS(data.response);
 
-            // Nếu trả về score >= 0 tức là chốt sổ Phase 2
+            // Phase 2 hoàn thành
             if (data.score >= 0) {
+                isSessionActive = false;
+                resetSilenceTimer();
+                if (recognition) recognition.stop();
+                
                 await fetch('/api/update_node', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({id: currentNode.id, score: data.score})
                 });
-                addMessage('ai', `[HỆ THỐNG] Session kết thúc. Bạn đạt ${data.score}/10 điểm.`);
+                
+                addMessage('system', `[SESSION END] Điểm đánh giá: ${data.score}/10`);
                 document.getElementById('next-btn').style.display = 'block';
-                loadMapData(); // Cập nhật lại màu sắc bản đồ
+                loadMapData(); 
             }
         } catch (error) {
-            addMessage('ai', '[HỆ THỐNG LỖI] LLaMA đang quá tải hoặc crash JSON. Vui lòng thử lại.');
+            addMessage('system', '[LỖI MẠNG/API] Vui lòng gửi lại.');
+            startSilenceTimer();
         }
         document.getElementById('send-btn').disabled = false;
     }
@@ -191,12 +244,14 @@
         document.getElementById('next-btn').style.display = 'none';
         document.getElementById('chat-box').innerHTML = '';
         chatHistory = [];
+        isSessionActive = true;
         
-        // Mồi cho AI biết cụm từ hiện tại là gì trong history
         const res = await fetch('/api/next_phrase');
         const data = await res.json();
         if (data.error) {
             alert(data.error);
+            isSessionActive = false;
+            document.getElementById('next-btn').style.display = 'block';
             return;
         }
 
@@ -216,11 +271,11 @@
         const chatData = await chatRes.json();
         chatHistory.push({"role": "assistant", "content": chatData.response});
         addMessage('ai', chatData.response);
-        playTTS(chatData.response);
+        await playTTS(chatData.response);
     };
 
     // ==========================================
-    // MODULE BẢN ĐỒ SAO (PLOTLY.JS)
+    // MODULE BẢN ĐỒ SAO
     // ==========================================
     
     async function loadMapData() {
@@ -228,26 +283,71 @@
         const res = await fetch(`/api/map_data?level=${level}&l1=${l1}&l2=${l2}`);
         mapDataCache = await res.json();
         
-        // Cập nhật thống kê
         const totalMastery = mapDataCache.reduce((sum, p) => sum + p.mastery, 0);
         document.getElementById('total-mastery').textContent = totalMastery.toFixed(1);
         
+        if (level === 'root') buildL1Panel();
+        else document.getElementById('l1-panel').style.display = 'none';
+        
         renderMap();
+    }
+    
+    function buildL1Panel() {
+        const panel = document.getElementById('l1-panel');
+        panel.style.display = 'block';
+        panel.innerHTML = '<div style="font-weight:bold; margin-bottom:10px; color:#f59e0b;">Danh sách 10 Đại tinh</div>';
+        
+        // Nhóm dữ liệu theo L1
+        const l1Stats = {};
+        mapDataCache.forEach(p => {
+            if(p.l1 === -1) return;
+            if(!l1Stats[p.l1]) l1Stats[p.l1] = { mastery: 0, maxMastery: 0, topWord: '' };
+            l1Stats[p.l1].mastery += p.mastery;
+            if (p.mastery > l1Stats[p.l1].maxMastery) {
+                l1Stats[p.l1].maxMastery = p.mastery;
+                l1Stats[p.l1].topWord = p.chunk;
+            }
+        });
+        
+        Object.keys(l1Stats).sort((a,b) => l1Stats[b].mastery - l1Stats[a].mastery).forEach(l1_id => {
+            const stat = l1Stats[l1_id];
+            const div = document.createElement('div');
+            div.className = 'l1-item';
+            div.innerHTML = `
+                <div class="l1-title">Đại tinh #${l1_id}</div>
+                <div>Mastery: ${stat.mastery.toFixed(1)}</div>
+                <div>Top cụm: <i>${stat.topWord || 'None'}</i></div>
+            `;
+            div.onclick = () => {
+                currentMapLevel = {level: 'l1', l1: parseInt(l1_id), l2: -1};
+                document.getElementById('nav-breadcrumb').textContent = `Bậc: Đại tinh L1 (${l1_id})`;
+                loadMapData();
+            };
+            panel.appendChild(div);
+        });
     }
 
     function renderMap() {
         const metric = document.getElementById('color-metric').value;
         const x = mapDataCache.map(p => p.x);
         const y = mapDataCache.map(p => p.y);
-        const text = mapDataCache.map(p => `<b>${p.chunk}</b><br>Mastery: ${p.mastery}<br>Block: ${p.block}<br>Forgetting: ${p.forgetting.toFixed(2)}`);
         
-        let marker = { size: 4, opacity: 0.8 };
+        // Chuẩn bị Text hover hiển thị đầy đủ thông tin yêu cầu
+        const text = mapDataCache.map(p => {
+            const blockStatus = p.block > 0 ? `<br><b style="color:red;">Blocked (Mở ở mốc: ${p.block})</b>` : '';
+            return `<b>${p.chunk}</b><br>
+            Mastery: ${p.mastery.toFixed(1)}<br>
+            Forgetting: ${p.forgetting > 9000 ? 'Chưa học' : p.forgetting.toFixed(2)}<br>
+            Số lần học lại: ${p.study_count}<br>
+            Lần học cuối: ${p.forgetting > 9000 ? 'N/A' : (Math.floor(p.forgetting) + ' ngày trước')}${blockStatus}`;
+        });
+        
+        let marker = { size: currentMapLevel.level === 'root' ? 3 : 5, opacity: 0.8 };
 
         if (metric === 'mastery') {
             marker.color = mapDataCache.map(p => p.norm_mastery);
             marker.colorscale = 'YlGnBu';
         } else if (metric === 'forgetting') {
-            // Chặn những node chưa học (forgetting = 9999) để scale màu đẹp hơn
             const maxF = Math.max(...mapDataCache.filter(p => p.forgetting < 9000).map(p => p.forgetting), 1);
             marker.color = mapDataCache.map(p => p.forgetting > 9000 ? 0 : p.forgetting / maxF);
             marker.colorscale = 'Hot';
@@ -259,7 +359,7 @@
         const trace = {
             x: x, y: y, text: text,
             mode: 'markers', hoverinfo: 'text',
-            type: 'scattergl', // Tối ưu WebGL cho hàng trăm nghìn điểm
+            type: 'scattergl',
             marker: marker
         };
 
@@ -267,12 +367,12 @@
             paper_bgcolor: '#0f172a', plot_bgcolor: '#0f172a', margin: {t: 0, l: 0, r: 0, b: 0},
             xaxis: {showgrid: false, zeroline: false, visible: false},
             yaxis: {showgrid: false, zeroline: false, visible: false},
-            hovermode: 'closest'
+            hovermode: 'closest',
+            dragmode: 'pan'
         };
 
-        Plotly.newPlot('map-container', [trace], layout, {responsive: true});
+        Plotly.newPlot('map-container', [trace], layout, {responsive: true, scrollZoom: true});
 
-        // Sự kiện click để zoom (Level down)
         document.getElementById('map-container').on('plotly_click', function(data) {
             const pointIdx = data.points[0].pointIndex;
             const node = mapDataCache[pointIdx];
@@ -301,9 +401,7 @@
         loadMapData();
     }
 
-    // Khởi tạo
     loadMapData();
-    document.getElementById('next-btn').click(); // Tự động load từ đầu tiên khi mở app
 </script>
 </body>
 </html>
